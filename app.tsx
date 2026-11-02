@@ -1456,7 +1456,7 @@ function TriageThreadList({
     const visible = threads
       .filter((thread) => !thread.isHidden && !thread.isArchived && (thread.parentThreadId === null || !threads.some((parent) => parent.id === thread.parentThreadId)))
       .filter((thread) => tagFilter === null || (tags[thread.id] ?? []).includes(tagFilter))
-      .sort((a, b) => b.updatedAt - a.updatedAt);
+      .sort((a, b) => b.createdAt - a.createdAt);
     // No Snoozed section until the first snooze: then nothing is snoozed (a null
     // sectionId is "unsectioned", not "in a missing section").
     const isSnoozed = (thread: PluginSidebarThread) => snoozedSectionId !== null && thread.sectionId === snoozedSectionId;
@@ -1522,7 +1522,34 @@ function TriageThreadList({
       };
     }
 
-    // A smart filter replaces the list with that one computed set.
+    // A smart filter keeps your sections and shows only the matching threads in
+    // each (fork: stable-created-order). "Done" keeps its flat list so Archive all
+    // still has one place to act on.
+    if (smart !== null && smart !== "done") {
+      const entry = SMART.find((candidate) => candidate.id === smart)!;
+      const members = awake.filter(sets[smart as SmartId]);
+      const inSection = (key: string, thread: PluginSidebarThread) => sectionKey(thread.sectionId) === key;
+      const filtered: Group[] = [];
+      for (const key of sectionKeys) {
+        const lane = lanes.find((candidate) => sectionKey(candidate.sectionId) === key);
+        const section = lane ? null : otherSections.find((candidate) => candidate.id === key);
+        if (!lane && !section) continue;
+        const threadsHere = members.filter((thread) => inSection(key, thread));
+        if (threadsHere.length === 0) continue;
+        filtered.push({
+          id: lane ? `lane:${lane.id}` : `section:${section!.id}`,
+          title: lane ? lane.title : section!.name,
+          threads: threadsHere,
+          section: lane ? { id: lane.sectionId, name: lane.title, isLane: true } : { id: section!.id, name: section!.name, isLane: false },
+        });
+      }
+      const placed = new Set(filtered.flatMap((group) => group.threads.map((thread) => thread.id)));
+      const loose = members.filter((thread) => !placed.has(thread.id));
+      if (loose.length > 0) filtered.unshift({ id: `smart:${smart}`, title: entry.label, threads: loose, dynamic: { glyph: entry.glyph, tone: entry.tone } });
+      return { smartCounts, machineCounts, groups: filtered };
+    }
+
+    // Done keeps the single computed list.
     if (smart !== null) {
       const entry = SMART.find((candidate) => candidate.id === smart)!;
       const smartId = smart as SmartId;
@@ -1555,28 +1582,14 @@ function TriageThreadList({
       return open.length > 0 && open.every((pr) => pr.attention === "review_requested");
     };
     const waitingLane = lanes.find((lane) => lane.id === "waiting");
-    const stalled = awake.filter((thread) => !thread.isPinned && !needs(thread) && isStalled(thread));
+    // Fork (stable-created-order): threads stay in their own section like in
+    // Conductor. Needs me, Stalled and Done are the counters' filters, not
+    // groups that pull threads out of their sections.
     const pinned = awake.filter((thread) => thread.isPinned);
-    const attention = awake.filter((thread) => !thread.isPinned && needs(thread));
-    const rest = awake.filter((thread) => !thread.isPinned && !needs(thread) && !isStalled(thread) && !sets.done(thread));
+    const rest = awake.filter((thread) => !thread.isPinned);
 
     const result: Group[] = [];
     if (pinned.length > 0) result.push({ id: "pinned", title: "Pinned", threads: pinned });
-    result.push({
-      id: "needs-me",
-      title: "Needs me",
-      threads: attention,
-      dynamic: { glyph: "question", tone: "text-amber-500" },
-    });
-    if (stalled.length > 0) {
-      result.push({
-        id: "stalled",
-        title: "Stalled",
-        threads: stalled,
-        dynamic: { glyph: "hourglass", tone: "text-orange-500" },
-        action: { label: "Nudge all", run: () => stalled.forEach((thread) => void rpc.call("thread_reply", { threadId: thread.id, text: NUDGE })) },
-      });
-    }
     for (const key of sectionKeys) {
       const lane = lanes.find((candidate) => sectionKey(candidate.sectionId) === key);
       if (lane) {
@@ -1610,15 +1623,6 @@ function TriageThreadList({
     }
     const firstUser = result.find((group) => group.section !== undefined);
     if (firstUser) firstUser.firstUserGroup = true;
-    const done = awake.filter((thread) => !thread.isPinned && !needs(thread) && sets.done(thread));
-    result.push({
-      id: "done",
-      title: "Done",
-      threads: done,
-      defaultCollapsed: true,
-      dynamic: { glyph: "check", tone: "text-green-500" },
-      action: done.length > 0 ? { label: "Archive all", run: () => void rpc.call("archive", { threadIds: done.map((thread) => thread.id) }) } : undefined,
-    });
     result.push({
       id: "snoozed",
       title: "Snoozed",
