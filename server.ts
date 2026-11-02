@@ -1438,7 +1438,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
                 id: thread.id,
                 title: thread.title,
                 status: thread.status,
-                section: thread.sectionId === null ? "Active" : sectionName.get(thread.sectionId) ?? thread.sectionId,
+                section: thread.sectionId === null ? "Unassigned" : sectionName.get(thread.sectionId) ?? thread.sectionId,
                 group,
                 awaiting: awaitingAll[thread.id] !== undefined,
                 watching: watching[thread.id] ?? null,

@@ -1437,7 +1437,7 @@ function TriageThreadList({
             onSelect={() =>
               setConfirm({
                 title: `Delete "${section.name}"?`,
-                body: `The section is removed and its ${ids.length} thread${ids.length === 1 ? "" : "s"} move back to Active. Threads are not deleted.`,
+                body: `The section is removed and its ${ids.length} thread${ids.length === 1 ? "" : "s"} move back to Unassigned. Threads are not deleted.`,
                 label: "Delete section",
                 run: () => sdk.threadSections.delete({ id: section.id! }),
               })
@@ -2218,7 +2218,7 @@ function LaneSettings() {
     <div className="jf-settings space-y-3 text-sm">
       <p className="text-muted-foreground">
         The Triage list's lanes (keys 1, 3, 4 and 5) are sections named Priority, Waiting for others, Pick up later and
-        Low priority. Active (key 2) is always there. Rename a lane's section later and it keeps its role.
+        Low priority. Unassigned (key 2) is always there. Rename a lane's section later and it keeps its role.
       </p>
       {missing.length === 0 ? (
         <p>All lanes have a section.</p>
@@ -2260,7 +2260,7 @@ function MigrationSettings() {
     <div className="jf-settings space-y-3 text-sm">
       <p className="text-muted-foreground">
         Turn "area" sections into tags. Their threads get the tag and move to
-        the Active lane, so one thread can be both #Commercial and Waiting. The
+        the Unassigned lane, so one thread can be both #Commercial and Waiting. The
         sections themselves are kept.
       </p>
       <div className="space-y-1.5">

@@ -68,7 +68,7 @@ export function resolveLanes(sections: readonly { id: string; name: string }[], 
   };
   const lanes: Lane[] = [
     lane("priority", "Priority", "1"),
-    { id: "active", title: "Active", sectionId: null, key: "2" },
+    { id: "active", title: "Unassigned", sectionId: null, key: "2" },
     lane("waiting", "Waiting for others", "3"),
     lane("later", "Pick up later", "4"),
     lane("low", "Low priority", "5"),
