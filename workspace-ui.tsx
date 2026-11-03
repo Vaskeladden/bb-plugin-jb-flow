@@ -61,6 +61,7 @@ function NavItem({
       aria-label={
         item.badge ? `${item.label}: ${item.badge.label}` : item.label
       }
+      title={item.label}
       aria-keyshortcuts={item.shortcut?.ariaKeyShortcuts}
       {...split.splitProps}
       onClick={(event) => {

@@ -434,6 +434,25 @@
   }
 }
 
+/* Phones: the sidebar is a drawer, and the 2-column tool grid (3 rows of 44 px
+   touch targets) pushed the first chat below the middle of the screen. Show
+   the tools as one row of icons; each keeps its label as aria-label/title. */
+@media (max-width: 767px) {
+  .jf-workspace-tools {
+    display: flex;
+    flex-wrap: wrap;
+  }
+  .jf-workspace-tool {
+    flex: 1 0 44px;
+    justify-content: center;
+    gap: 3px;
+    padding-inline: 4px;
+  }
+  .jf-workspace-tool > span:not(.jf-workspace-badge) {
+    display: none;
+  }
+}
+
 /* Reserve a separate row for workspace navigation. Framed desktop layouts
    pull their thread header into the native title row with a negative margin,
    so keep their existing title-row padding as well as the workspace row. */
