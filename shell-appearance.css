@@ -65,8 +65,8 @@
   background: var(--primary);
 }
 .jb-flow-shell [data-jb-flow-section-header] {
-  padding-top: 22px;
-  padding-bottom: 8px;
+  padding-top: 8px;
+  padding-bottom: 3px;
   font-size: 10px;
   letter-spacing: 0.035em;
 }
@@ -176,7 +176,7 @@
 }
 @media (min-width: 768px) {
   .jb-flow-shell [data-jb-flow-row] {
-    min-height: 35px;
+    min-height: 26px;
   }
   .jb-flow-shell [data-thread-window] [class~="group/message"] {
     line-height: 1.75;

@@ -84,7 +84,7 @@
   rotate: 180deg;
 }
 .jf-triage [data-jb-flow-section-header] {
-  padding: 16px 7px 7px;
+  padding: 8px 7px 3px;
   font-size: 11px;
   letter-spacing: 0;
 }
@@ -98,9 +98,9 @@
   min-width: 0;
 }
 .jf-triage .jf-thread-row {
-  min-height: 34px;
+  min-height: 26px;
   height: auto;
-  padding: 7px 7px 7px 18px;
+  padding: 3px 7px 3px 18px;
   font-size: 12px;
   gap: 7px;
 }

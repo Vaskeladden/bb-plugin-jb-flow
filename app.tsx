@@ -656,7 +656,7 @@ function ThreadRow({
           }}
           onKeyDown={onKeyDown}
           className={cn(
-            "jf-thread-row group flex h-8 items-center gap-2 rounded-md pl-6 pr-2 text-sm outline-none",
+            "jf-thread-row group flex h-7 items-center gap-2 rounded-md pl-6 pr-2 text-sm outline-none",
             "hover:bg-accent focus-visible:bg-accent focus-visible:ring-1 focus-visible:ring-ring",
             active && "bg-accent",
           )}
@@ -914,7 +914,7 @@ function GroupHeader({
   auto?: boolean;
 }) {
   const header = (
-    <div data-jb-flow-section-header="" onPointerDown={onDragStart} className="group/header flex w-full items-center gap-1 px-2 pb-1.5 pt-5 text-xs font-medium text-muted-foreground">
+    <div data-jb-flow-section-header="" onPointerDown={onDragStart} className="group/header flex w-full items-center gap-1 px-2 pb-1 pt-2 text-xs font-medium text-muted-foreground">
       <button type="button" onClick={onToggle} aria-expanded={!collapsed} className="flex min-w-0 flex-1 items-center gap-1.5 hover:text-foreground">
         {dynamic ? (
           <Glyph name={dynamic.glyph} className={cn("size-3.5", dynamic.tone)} />
