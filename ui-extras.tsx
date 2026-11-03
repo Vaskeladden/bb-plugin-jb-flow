@@ -133,7 +133,8 @@ export function rowStatus(
     const label = prs.length === 1 ? `PR #${worst.number}: ${attentionLabel(worst.attention)}` : `${prs.length} PRs; worst: #${worst.number} ${attentionLabel(worst.attention)}`;
     return { glyph: prGlyph(worst), tone: PR_TONE[worst.attention] ?? "text-muted-foreground", label };
   }
-  if (thread.isUnread) return { glyph: "check", tone: "text-green-500", label: "Finished, unread" };
+  // Fork: a finished chat looks like any idle one; its bold title already says unread.
+  if (thread.isUnread) return { glyph: "dot", tone: "text-muted-foreground/40", label: "Finished, unread" };
   return { glyph: "dot", tone: "text-muted-foreground/40", label: "Idle" };
 }
 
