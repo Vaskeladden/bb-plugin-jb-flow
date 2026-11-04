@@ -64,8 +64,17 @@ function Choices({ threadId }: { threadId: string }) {
     });
   // The reply for several groups names each answer; a lone group keeps its usual "go …" or number.
   const missing = groups.some((group, index) => group.mode === "choice" && pickedIn(index).length === 0);
+  // Several decisions name theirs by position ("decision 2: 1"), so each answer stays tied to its question.
+  const decisions = groups.filter((group) => group.mode === "choice").length;
+  let decisionNumber = 0;
   const composed = groups
-    .map((group, index) => (group.mode === "go" ? goText(pickedIn(index)) : groups.length > 1 ? `decision ${pickedIn(index)[0]}` : String(pickedIn(index)[0])))
+    .map((group, index) => {
+      if (group.mode === "go") return goText(pickedIn(index));
+      const answer = String(pickedIn(index)[0]);
+      if (groups.length === 1) return answer;
+      decisionNumber += 1;
+      return decisions > 1 ? `decision ${decisionNumber}: ${answer}` : `decision: ${answer}`;
+    })
     .join("; ");
   const reply = async (text: string) => {
     if (locked.current) return;
@@ -110,7 +119,9 @@ function Choices({ threadId }: { threadId: string }) {
         return (
           <div key={index} className="jf-choices-group" role="group" aria-label={go ? "Steps" : group.question || "Decision"}>
             {groups.length > 1 && (
-              <p className="jf-choices-question">{go ? "Steps" : group.question ? `Decision: ${group.question}` : "Decision"}</p>
+              <p className="jf-choices-question">
+                {go ? "Steps" : `${decisions > 1 ? `Decision ${groups.slice(0, index + 1).filter((g) => g.mode === "choice").length}` : "Decision"}${group.question ? `: ${group.question}` : ""}`}
+              </p>
             )}
             <div className="jf-choices-list">
               {group.options.map((option) => {

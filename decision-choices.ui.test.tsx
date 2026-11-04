@@ -164,8 +164,35 @@ it("shows steps and a decision as two groups and sends both answers at once", as
   fireEvent.click(slot.getByRole("checkbox", { name: /Tidy the docs/ }));
   fireEvent.click(slot.getByRole("radio", { name: /Everyone on Monday/ }));
   expect(reply).not.toHaveBeenCalled();
-  fireEvent.click(slot.getByRole("button", { name: "Send “go 3; decision 2”" }));
-  await slot.findByText("Sent “go 3; decision 2”");
-  expect(reply.mock.calls[0]).toEqual([{ threadId: "t1", text: "go 3; decision 2" }]);
+  fireEvent.click(slot.getByRole("button", { name: "Send “go 3; decision: 2”" }));
+  await slot.findByText("Sent “go 3; decision: 2”");
+  expect(reply.mock.calls[0]).toEqual([{ threadId: "t1", text: "go 3; decision: 2" }]);
+  slot.lifecycle.unmount();
+});
+
+it("asks two decisions as two groups and sends each answer tied to its question", async () => {
+  const reply = vi.fn().mockResolvedValue({ ok: true });
+  const two = (question: string) => ({
+    mode: "choice" as const,
+    question,
+    options: [
+      { n: 1, text: `${question} yes`, recommended: true },
+      { n: 2, text: `${question} no`, recommended: false },
+    ],
+  });
+  const slot = renderSlot(
+    { component: DecisionChips },
+    { threadId: "t1", updatedAt: 1, idle: true },
+    { rpc: { decision_options: () => ({ groups: [two("Money page"), two("Test site")] }), thread_reply: reply } },
+  );
+  expect((await slot.findAllByRole("radio")).length).toBe(4);
+  expect(slot.getByText("Decision 1: Money page")).toBeTruthy();
+  expect(slot.getByText("Decision 2: Test site")).toBeTruthy();
+  fireEvent.click(slot.getByRole("radio", { name: /Money page yes/ }));
+  expect(slot.getByRole("button", { name: "Choose an option to send" }).hasAttribute("disabled")).toBe(true);
+  fireEvent.click(slot.getByRole("radio", { name: /Test site no/ }));
+  fireEvent.click(slot.getByRole("button", { name: "Send “decision 1: 1; decision 2: 2”" }));
+  await slot.findByText("Sent “decision 1: 1; decision 2: 2”");
+  expect(reply.mock.calls[0]).toEqual([{ threadId: "t1", text: "decision 1: 1; decision 2: 2" }]);
   slot.lifecycle.unmount();
 });
