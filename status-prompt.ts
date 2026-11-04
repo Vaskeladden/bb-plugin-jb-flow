@@ -1,5 +1,7 @@
 // What "Update status" sends when the Status report prompt setting is empty.
-// The thread monitor parses these fields (see thread-status.ts).
+// The thread monitor parses these fields (see thread-status.ts). The next
+// steps are a plain quote block: bb's chat does not render GitHub's
+// "> [!TIP]" callouts, so that marker showed up as literal text.
 export const DEFAULT_STATUS_PROMPT = [
   "Give a short status report in exactly this format, then stop. Leave out any line or section with nothing real to say.",
   "",
@@ -18,7 +20,6 @@ export const DEFAULT_STATUS_PROMPT = [
   "",
   "### Next steps",
   "If there are steps you can do yourself, recommend a path forward and offer them as a numbered list in a callout. Don't start them until I reply.",
-  "> [!TIP]",
   "> **Path forward:** <one line>",
   "> 1. <step> · <why, a few words>",
   "> 2. <step> · <why>",
@@ -26,7 +27,6 @@ export const DEFAULT_STATUS_PROMPT = [
   "> Reply **go** for all, or **go 1,3**.",
   "",
   "If you need a decision from me instead, ask in the same place:",
-  "> [!TIP]",
   "> **Decision needed:** <question>",
   "> 1. <option> · <why> (recommended)",
   "> 2. <option> · <why>",
