@@ -107,11 +107,11 @@ const NUMBERED = /^\s*(\d+)[.)]\s+(.+)$/;
 const GROUP_HEADING = /\*\*(Path forward|Decision needed):\*\*/i;
 const MAX_STEP_GROUPS = 9;
 
-/** The line that asks a decision: the last text before its list, without its label or "A." prefix. */
+/** The line that introduces a group: the last text before its list, without its label or "A." prefix. */
 function questionOf(lines: readonly string[]): string {
   const first = lines.findIndex((line) => NUMBERED.test(line));
-  const intro = lines.slice(0, first).filter((line) => line.trim() !== "" && !/\*\*Recommended/i.test(line));
-  const text = (intro[intro.length - 1] ?? "").replace(/\*\*Decision needed:\*\*/i, "");
+  const intro = lines.slice(0, first).filter((line) => line.trim() !== "" && !/\*\*Recommended|^\s*\[!\w+\]/i.test(line));
+  const text = (intro[intro.length - 1] ?? "").replace(/\*\*(Decision needed|Path forward):\*\*/i, "");
   return plain(text).replace(/^[A-Z][.)]\s+/, "").slice(0, 300);
 }
 
@@ -131,7 +131,7 @@ function stepGroup(lines: readonly string[], decision: boolean): StepGroup | nul
   // "**Recommended:** 1" or "1,3" names steps by number.
   const named = /\*\*Recommended:?\*\*:?\s*([\d,\s]+)(?:$|\n)/i.exec(text)?.[1];
   for (const n of named?.match(/\d+/g) ?? []) if (Number(n) <= items.length && !recommended.includes(Number(n))) recommended.push(Number(n));
-  return { mode: decision ? "choice" : "go", question: decision ? questionOf(lines) : "", items, recommended };
+  return { mode: decision ? "choice" : "go", question: questionOf(lines), items, recommended };
 }
 
 /**

@@ -407,7 +407,8 @@ function DecisionChipsBanner() {
   const threadId = composer.scope.kind === "thread" ? composer.scope.threadId : null;
   const { threads } = useSidebarThreads();
   const thread = threadId ? threads.find((candidate) => candidate.id === threadId) : undefined;
-  if (composer.isRunning || !composer.isEmpty) return null;
+  // Stays while you type: the question lives here, so it must not vanish with a draft.
+  if (composer.isRunning) return null;
   return <DecisionChips threadId={threadId} updatedAt={thread?.updatedAt ?? null} idle={thread?.status === "idle"} />;
 }
 

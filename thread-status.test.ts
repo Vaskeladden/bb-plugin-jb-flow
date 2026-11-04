@@ -158,7 +158,7 @@ it("reads a go-list under a **Path forward:** line without taking it for a recom
   expect(report?.stepGroups).toEqual([
     {
       mode: "go",
-      question: "",
+      question: "finish the menu, then the docs",
       items: ["Add the item · one step instead of three", "Update the README · keep docs current"],
       recommended: [],
     },

@@ -64,7 +64,7 @@ test("next move: a status report's steps, answered with go or a number", () => {
     groups: [
       {
         mode: "go",
-        question: "",
+        question: "check it, then tidy",
         options: [
           { n: 1, text: "Check the nightly run", recommended: true },
           { n: 2, text: "Tidy the docs", recommended: false },
@@ -84,4 +84,11 @@ test("next move without a report: a trailing list, go-list when it asks for go",
   assert.equal(choice.groups[0]!.mode, "choice");
   assert.equal(choice.groups[0]!.options.length, 2);
   assert.deepEqual(nextMove("All done, the PR is merged."), { groups: [] });
+});
+
+test("next move names the question of a list outside a report", () => {
+  assert.equal(nextMove("Which should I do?\n1. Merge now\n2. Wait for review").groups[0]!.question, "Which should I do?");
+  assert.equal(nextMove("> [!IMPORTANT]\n> **Decision needed:** Which database?\n> 1. Postgres\n> 2. MySQL\n\nLet me know.").groups[0]!.question, "Which database?");
+  assert.equal(nextMove("> [!TIP]\n> 1. Merge now (recommended)\n> 2. Wait").groups[0]!.question, "");
+  assert.equal(nextMove("> **Recommended:** 1\n> 1. Merge now\n> 2. Wait\n>\n> Reply **go** for all, or **go 1,3**.").groups[0]!.question, "");
 });

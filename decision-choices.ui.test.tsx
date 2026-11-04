@@ -196,3 +196,30 @@ it("asks two decisions as two groups and sends each answer tied to its question"
   expect(reply.mock.calls[0]).toEqual([{ threadId: "t1", text: "decision 1: 1; decision 2: 2" }]);
   slot.lifecycle.unmount();
 });
+it("shows a lone decision's question, and says what it shows for the message to hide", async () => {
+  const slot = renderSlot(
+    { component: DecisionChips },
+    { threadId: "t1", updatedAt: 1, idle: true },
+    { rpc: { decision_options: () => ({ groups: [{ mode: "choice" as const, question: "Which rollout?", options }] }) } },
+  );
+  await slot.findByText("Which rollout?");
+  const section = slot.getByRole("region");
+  expect(JSON.parse(section.getAttribute("data-questions")!)).toEqual([{ question: "Which rollout?", options: options.map((option) => option.text) }]);
+  slot.lifecycle.unmount();
+});
+it("keeps the box and its sent state when a thread update leaves the same question", async () => {
+  const groups = { groups: [{ mode: "choice" as const, question: "Which rollout?", options }] };
+  const load = vi.fn(() => groups);
+  const reply = vi.fn().mockResolvedValue({ ok: true });
+  const slot = renderSlot(
+    { component: DecisionChips },
+    { threadId: "t1", updatedAt: 1, idle: true },
+    { rpc: { decision_options: load, thread_reply: reply } },
+  );
+  fireEvent.click(await slot.findByRole("button", { name: /^Reply 2:/ }));
+  await slot.findByText("Reply sent");
+  slot.rerender(<DecisionChips threadId="t1" updatedAt={2} idle />);
+  await waitFor(() => expect(load).toHaveBeenCalledTimes(2));
+  expect(slot.getByText("Reply sent")).toBeTruthy();
+  slot.lifecycle.unmount();
+});

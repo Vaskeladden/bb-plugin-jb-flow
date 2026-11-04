@@ -22,19 +22,13 @@ const GO_REPLY = /\b(reply|say|write|type|send)\s+[*_`"“']*go\b|\bgo[*_`]*\s+(
 const CHOICE_OUTRO =
   /\b(reply|answer|respond|write|type|say|send)\b[^.\n]{0,40}\b(number|option|one of)\b|\bpick (one|a number|an option)\b|\bwhich (one|option)\b|\bgo\**\s+(for all|\d)/i;
 
-/**
- * Numbered options the user can pick from, for one-click replies. A numbered
- * list is only a choice when something says so: an option marked recommended,
- * an intro that asks or offers, or a closing line asking for a number. With
- * `{ strict: false }` any trailing list counts (the "does this need me" check,
- * where a to-do list for the user is also an ask).
- */
-export function parseDecisionOptions(message: string, { strict = true }: { strict?: boolean } = {}): DecisionOption[] {
+/** The numbered list a message ends with, the line before it and the text after it. */
+function trailingList(message: string): { options: DecisionOption[]; intro: string; outro: string } | null {
   const lines = message.trim().split("\n").slice(-30);
   // Walk up from the end, skipping trailing chatter (timestamps, "Reply with the number").
   let end = lines.length - 1;
   while (end >= 0 && !/^\s*(?:>\s*)*\d+[.)]\s+\S/.test(lines[end]!)) {
-    if (lines.length - 1 - end > 6) return [];
+    if (lines.length - 1 - end > 6) return null;
     end -= 1;
   }
   const options: DecisionOption[] = [];
@@ -53,8 +47,29 @@ export function parseDecisionOptions(message: string, { strict = true }: { stric
       recommended: /\(recommended\)|\brecommended\b/i.test(raw),
     });
   }
-  // "When it's green, I'll: 1. Merge 2. Release" is the agent's own plan, not a choice.
   const intro = lines.slice(0, first).reverse().find((line) => line.trim() !== "" && !/^\s*(?:>\s*)*$/.test(line)) ?? "";
+  return { options, intro, outro: lines.slice(end + 1).join("\n") };
+}
+
+/** A trailing list's intro as the box shows it: a marker or a "Recommended" line is not a question. */
+function questionFromIntro(intro: string): string {
+  const text = intro.replace(/^\s*(?:>\s*)*/, "");
+  if (/^\[!\w+\]|^\*\*Recommended/i.test(text)) return "";
+  return plain(text.replace(/\*\*(Decision needed|Path forward):\*\*/i, "")).slice(0, 300);
+}
+
+/**
+ * Numbered options the user can pick from, for one-click replies. A numbered
+ * list is only a choice when something says so: an option marked recommended,
+ * an intro that asks or offers, or a closing line asking for a number. With
+ * `{ strict: false }` any trailing list counts (the "does this need me" check,
+ * where a to-do list for the user is also an ask).
+ */
+export function parseDecisionOptions(message: string, { strict = true }: { strict?: boolean } = {}): DecisionOption[] {
+  const list = trailingList(message);
+  if (!list) return [];
+  const { options, intro, outro } = list;
+  // "When it's green, I'll: 1. Merge 2. Release" is the agent's own plan, not a choice.
   if (/\bI('ll| will|'m going to)\b[^?]*:\s*\**\s*$/i.test(intro) && !options.some((option) => option.recommended)) return [];
   // "Summary of changes: 1. Renamed… 2. Added…" reports what happened.
   const recommended = options.some((option) => option.recommended);
@@ -67,7 +82,6 @@ export function parseDecisionOptions(message: string, { strict = true }: { stric
   if (options.length < 2 || options.length > 9 || options[0]!.n !== 1) return [];
   if (options.some((option, index) => option.n !== index + 1)) return [];
   // "Manual fallback: 1. Finance verifies… 2. …" describes steps; no buttons.
-  const outro = lines.slice(end + 1).join("\n");
   if (strict && !recommended && !CHOICE_INTRO.test(intro) && !CHOICE_OUTRO.test(outro)) return [];
   return options;
 }
@@ -94,5 +108,5 @@ export function nextMove(message: string): { groups: DecisionGroup[] } {
   const options = parseDecisionOptions(message);
   if (!options.length) return { groups: [] };
   const tail = message.trim().split("\n").slice(-30).join("\n");
-  return { groups: [{ mode: GO_REPLY.test(tail) ? "go" : "choice", question: "", options }] };
+  return { groups: [{ mode: GO_REPLY.test(tail) ? "go" : "choice", question: questionFromIntro(trailingList(message)?.intro ?? ""), options }] };
 }

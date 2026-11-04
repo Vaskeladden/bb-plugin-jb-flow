@@ -15,7 +15,7 @@ export function DecisionChips({
   idle: boolean;
 }) {
   return threadId && idle ? (
-    <Choices key={`${threadId}:${updatedAt}`} threadId={threadId} />
+    <Choices key={threadId} threadId={threadId} updatedAt={updatedAt} />
   ) : null;
 }
 
@@ -25,7 +25,7 @@ function goText(picked: readonly number[]): string {
   return steps.length ? `go ${steps.join(",")}` : "go";
 }
 
-function Choices({ threadId }: { threadId: string }) {
+function Choices({ threadId, updatedAt }: { threadId: string; updatedAt: number | null }) {
   const rpc = useRpc<typeof rpcContract>();
   const [groups, setGroups] = useState<DecisionGroup[]>([]);
   // Per group: ticked steps for a go-list, the one chosen option for a decision.
@@ -35,22 +35,33 @@ function Choices({ threadId }: { threadId: string }) {
   const [error, setError] = useState<string | null>(null);
   const locked = useRef(false);
   const mounted = useRef(false);
+  const shown = useRef("");
   useEffect(() => {
     mounted.current = true;
     let live = true;
     rpc.call("decision_options", { threadId }).then(
       (result) => {
-        if (live) setGroups(result.groups.filter((group) => group.options.length > 0));
+        if (!live) return;
+        const next = result.groups.filter((group) => group.options.length > 0);
+        // A thread update that leaves the same question keeps the box, its picks and its sent state.
+        const text = JSON.stringify(next);
+        if (text === shown.current) return;
+        shown.current = text;
+        locked.current = false;
+        setGroups(next);
+        setPicked([]);
+        setPending(null);
+        setSent(null);
+        setError(null);
       },
-      () => {
-        if (live) setGroups([]);
-      },
+      // A failed refresh keeps what is on screen.
+      () => undefined,
     );
     return () => {
       live = false;
       mounted.current = false;
     };
-  }, [rpc, threadId]);
+  }, [rpc, threadId, updatedAt]);
   if (!groups.length) return null;
   // One decision alone answers on click; anything else is picked first and sent once.
   const instant = groups.length === 1 && groups[0]!.mode === "choice";
@@ -108,7 +119,13 @@ function Choices({ threadId }: { threadId: string }) {
           ? "Choose an option to send"
           : `Send “${composed}”`;
   return (
-    <section className="jf-choices" aria-label="Reply choices" data-mode={instant ? "choice" : "go"}>
+    <section
+      className="jf-choices"
+      aria-label="Reply choices"
+      data-mode={instant ? "choice" : "go"}
+      // What the box shows, so vaskeladden-bb hides exactly these callouts in the message.
+      data-questions={JSON.stringify(groups.map((group) => ({ question: group.question, options: group.options.map((option) => option.text) })))}
+    >
       <div className="jf-choices-heading">
         <Icon name="MessageCircle" className="size-3.5" />
         <span>YOUR NEXT MOVE</span>
@@ -116,13 +133,11 @@ function Choices({ threadId }: { threadId: string }) {
       </div>
       {groups.map((group, index) => {
         const go = group.mode === "go";
+        const decisionLabel = decisions > 1 ? `Decision ${groups.slice(0, index + 1).filter((g) => g.mode === "choice").length}` : "Decision";
+        const heading = groups.length === 1 ? group.question : `${go ? "Steps" : decisionLabel}${group.question ? `: ${group.question}` : ""}`;
         return (
           <div key={index} className="jf-choices-group" role="group" aria-label={go ? "Steps" : group.question || "Decision"}>
-            {groups.length > 1 && (
-              <p className="jf-choices-question">
-                {go ? "Steps" : `${decisions > 1 ? `Decision ${groups.slice(0, index + 1).filter((g) => g.mode === "choice").length}` : "Decision"}${group.question ? `: ${group.question}` : ""}`}
-              </p>
-            )}
+            {heading && <p className="jf-choices-question">{heading}</p>}
             <div className="jf-choices-list">
               {group.options.map((option) => {
                 const text = String(option.n);
