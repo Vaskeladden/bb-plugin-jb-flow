@@ -112,7 +112,7 @@ function Choices({ threadId }: { threadId: string }) {
       <div className="jf-choices-heading">
         <Icon name="MessageCircle" className="size-3.5" />
         <span>YOUR NEXT MOVE</span>
-        <span className="jf-choices-hint">{instant ? "Choose a reply" : onlyGo ? "Pick steps, or Go for all" : "Pick steps and an answer, then send"}</span>
+        <span className="jf-choices-hint">{instant ? "Choose a reply" : onlyGo ? "Pick steps, or Go for all" : groups.some((group) => group.mode === "go") ? "Pick steps and an answer, then send" : "Answer each, then send"}</span>
       </div>
       {groups.map((group, index) => {
         const go = group.mode === "go";
