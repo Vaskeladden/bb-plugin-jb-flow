@@ -30,7 +30,7 @@ export const statusReportSchema = z.object({
         recommended: z.array(z.number()).max(9),
       }),
     )
-    .max(3)
+    .max(9)
     .optional(),
   /** "Doing now: …": the agent is already carrying on, nothing to pick. */
   doingNow: z.string().max(500).optional(),
@@ -103,14 +103,25 @@ export function parseStatusReport(
 
 export type StepGroup = NonNullable<StatusReport["stepGroups"]>[number];
 
+const NUMBERED = /^\s*(\d+)[.)]\s+(.+)$/;
+const GROUP_HEADING = /\*\*(Path forward|Decision needed):\*\*/i;
+const MAX_STEP_GROUPS = 9;
+
+/** The line that asks a decision: the last text before its list, without its label or "A." prefix. */
+function questionOf(lines: readonly string[]): string {
+  const first = lines.findIndex((line) => NUMBERED.test(line));
+  const intro = lines.slice(0, first).filter((line) => line.trim() !== "" && !/\*\*Recommended/i.test(line));
+  const text = (intro[intro.length - 1] ?? "").replace(/\*\*Decision needed:\*\*/i, "");
+  return plain(text).replace(/^[A-Z][.)]\s+/, "").slice(0, 300);
+}
+
 /** One block of numbered lines: a go-list, or a decision when it asks one. */
-function stepGroup(lines: readonly string[]): StepGroup | null {
+function stepGroup(lines: readonly string[], decision: boolean): StepGroup | null {
   const text = lines.join("\n");
-  const question = /\*\*Decision needed:\*\*\s*(.+)/i.exec(text)?.[1];
   const items: string[] = [];
   const recommended: number[] = [];
   for (const line of lines) {
-    const match = /^\s*(\d+)[.)]\s+(.+)$/.exec(line);
+    const match = NUMBERED.exec(line);
     if (!match) continue;
     if (/\(recommended\)/i.test(match[2]!)) recommended.push(items.length + 1);
     items.push(plain(match[2]!.replace(/\s*\(recommended\)\s*/i, " ")).slice(0, 300));
@@ -120,12 +131,14 @@ function stepGroup(lines: readonly string[]): StepGroup | null {
   // "**Recommended:** 1" or "1,3" names steps by number.
   const named = /\*\*Recommended:?\*\*:?\s*([\d,\s]+)(?:$|\n)/i.exec(text)?.[1];
   for (const n of named?.match(/\d+/g) ?? []) if (Number(n) <= items.length && !recommended.includes(Number(n))) recommended.push(Number(n));
-  return { mode: question ? "choice" : "go", question: question ? plain(question).slice(0, 300) : "", items, recommended };
+  return { mode: decision ? "choice" : "go", question: decision ? questionOf(lines) : "", items, recommended };
 }
 
 /**
  * The "### Next steps" section: go-lists and numbered decisions, one group per
- * **Path forward:** or **Decision needed:** block, or "Doing now".
+ * **Path forward:** or **Decision needed:** block, or "Doing now". Agents also
+ * ask several questions under one heading, each list numbered from 1 under its
+ * own line, so a list that restarts at 1 is a new group too.
  */
 export function parseNextSteps(reply: string): Pick<StatusReport, "stepGroups" | "doingNow"> {
   const section =
@@ -133,13 +146,30 @@ export function parseNextSteps(reply: string): Pick<StatusReport, "stepGroups" |
   if (!section.trim()) return {};
   const lines = section.split("\n").map((line) => line.replace(/^\s*(?:>\s?)+/, ""));
   const doing = /\*\*Doing now:\*\*\s*(.+)/i.exec(lines.join("\n"))?.[1];
-  // A new group starts at each heading line; lines before the first belong to it.
-  const blocks: string[][] = [[]];
+  const blocks: { lines: string[]; decision: boolean }[] = [{ lines: [], decision: false }];
   for (const line of lines) {
-    if (/\*\*(Path forward|Decision needed):\*\*/i.test(line) && blocks[blocks.length - 1]!.some((l) => /^\s*\d+[.)]\s/.test(l))) blocks.push([]);
-    blocks[blocks.length - 1]!.push(line);
+    const current = blocks[blocks.length - 1]!;
+    const hasList = current.lines.some((candidate) => NUMBERED.test(candidate));
+    if (GROUP_HEADING.test(line) && hasList) {
+      blocks.push({ lines: [line], decision: /Decision needed/i.test(line) });
+      continue;
+    }
+    if (NUMBERED.exec(line)?.[1] === "1" && hasList) {
+      // The new question's own line sits after the last list and moves with it.
+      // Without such a line this is one list written as 1. 1. 1., or an item's indented detail.
+      const lastItem = current.lines.reduce((last, candidate, index) => (NUMBERED.test(candidate) ? index : last), -1);
+      if (current.lines.slice(lastItem + 1).some((candidate) => /^\S/.test(candidate))) {
+        blocks.push({ lines: [...current.lines.splice(lastItem + 1), line], decision: current.decision });
+        continue;
+      }
+    }
+    if (/\*\*Decision needed:\*\*/i.test(line)) current.decision = true;
+    current.lines.push(line);
   }
-  const stepGroups = blocks.map(stepGroup).filter((group): group is StepGroup => group !== null).slice(0, 3);
+  const stepGroups = blocks
+    .map((block) => stepGroup(block.lines, block.decision))
+    .filter((group): group is StepGroup => group !== null)
+    .slice(0, MAX_STEP_GROUPS);
   return { stepGroups, ...(doing ? { doingNow: plain(doing).slice(0, 500) } : {}) };
 }
 

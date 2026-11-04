@@ -177,6 +177,50 @@ it("reads steps and a decision in one report as two groups, not one list of five
   expect(report?.stepGroups?.[1]).toMatchObject({ question: "which rollout?", recommended: [1] });
 });
 
+it("reads three questions under one heading as three decisions, each with its own line", () => {
+  const report = parseStatusReport(
+    [
+      "**Goal:** Clear the stuck jobs",
+      "**Done:** Checked seven discounts",
+      "",
+      "### Next steps",
+      "> [!TIP]",
+      "> **Decision needed:** Three quick questions.",
+      ">",
+      "> **A. A retry now fails every night. Should I fix that?**",
+      "> 1. Yes, build the fix · stops it happening again (recommended)",
+      "> 2. Wait · the money stays right",
+      ">",
+      "> **B. Six June discounts were worked out two ways. Which one counts?**",
+      "> 1. What the customer was billed (recommended)",
+      "> 2. Our system's sum",
+      ">",
+      "> **C. One June job was never billed. What should we do?**",
+      "> 1. Let it go (recommended)",
+      "> 2. Bill it now",
+      ">",
+      "> Reply with three numbers, like **1 1 1**.",
+    ].join("\n"),
+    1,
+  );
+  expect(report?.stepGroups?.map((group) => [group.mode, group.question, group.items.length, group.recommended])).toEqual([
+    ["choice", "A retry now fails every night. Should I fix that?", 2, [1]],
+    ["choice", "Six June discounts were worked out two ways. Which one counts?", 2, [1]],
+    ["choice", "One June job was never billed. What should we do?", 2, [1]],
+  ]);
+});
+
+it("keeps one list written as 1. 1. 1. together", () => {
+  const report = parseStatusReport("**Goal:** Go\n**Done:** Went\n\n### Next steps\n**Decision needed:** Which?\n1. A\n   why A\n1. B\n\n1. C", 1);
+  expect(report?.stepGroups?.map((group) => group.items)).toEqual([["A", "B", "C"]]);
+});
+
+it("keeps more than three questions", () => {
+  const ask = (n: number) => `> **Decision needed:** question ${n}?\n> 1. Yes\n> 2. No\n\n`;
+  const report = parseStatusReport(`**Goal:** Go\n**Done:** Went\n\n### Next steps\n${[1, 2, 3, 4].map(ask).join("")}`, 1);
+  expect(report?.stepGroups?.map((group) => group.question)).toEqual(["question 1?", "question 2?", "question 3?", "question 4?"]);
+});
+
 it("hands back with the status prompt the user set, or the built-in one", () => {
   expect(handBackInstructions("")).toContain(DEFAULT_STATUS_PROMPT);
   expect(handBackInstructions("**Goal:** <x>")).toContain("**Goal:** <x>");
