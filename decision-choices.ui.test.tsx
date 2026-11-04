@@ -24,7 +24,7 @@ it("shows full choice text and recommendation, sends only the number, and preven
     { component: DecisionChips },
     { threadId: "t1", updatedAt: 1, idle: true },
     {
-      rpc: { decision_options: () => ({ options }), thread_reply: reply },
+      rpc: { decision_options: () => ({ groups: [{ mode: "choice" as const, question: "", options }] }), thread_reply: reply },
     },
   );
   const button = await slot.findByRole("button", {
@@ -51,7 +51,7 @@ it("shows a failed send and re-enables every choice for retry", async () => {
     { component: DecisionChips },
     { threadId: "t1", updatedAt: 1, idle: true },
     {
-      rpc: { decision_options: () => ({ options }), thread_reply: reply },
+      rpc: { decision_options: () => ({ groups: [{ mode: "choice" as const, question: "", options }] }), thread_reply: reply },
     },
   );
   const button = await slot.findByRole("button", {
@@ -66,7 +66,7 @@ it("shows a failed send and re-enables every choice for retry", async () => {
   slot.lifecycle.unmount();
 });
 it("fetches nothing while running or without a thread, and ignores results after unmount", async () => {
-  const read = vi.fn(() => ({ options }));
+  const read = vi.fn(() => ({ groups: [{ mode: "choice" as const, question: "", options }] }));
   const running = renderSlot(
     { component: DecisionChips },
     { threadId: "t1", updatedAt: 1, idle: false },
@@ -75,7 +75,7 @@ it("fetches nothing while running or without a thread, and ignores results after
   expect(read).not.toHaveBeenCalled();
   expect(running.queryByRole("region")).toBeNull();
   running.lifecycle.unmount();
-  let finish!: (value: { options: typeof options }) => void;
+  let finish!: (value: { groups: { mode: "choice"; question: string; options: typeof options }[] }) => void;
   const slot = renderSlot(
     { component: DecisionChips },
     { threadId: "t1", updatedAt: 1, idle: true },
@@ -90,10 +90,10 @@ it("fetches nothing while running or without a thread, and ignores results after
   );
   await waitFor(() => expect(finish).toBeTypeOf("function"));
   slot.lifecycle.unmount();
-  finish({ options });
+  finish({ groups: [{ mode: "choice", question: "", options }] });
 });
 it("offers a go-list as steps to tick and Go, sending go or go with the picked steps", async () => {
-  const steps = { mode: "go" as const, options: [...options, { n: 3, text: "Tidy the docs", recommended: false }] };
+  const steps = { groups: [{ mode: "go" as const, question: "", options: [...options, { n: 3, text: "Tidy the docs", recommended: false }] }] };
   const reply = vi.fn().mockResolvedValue({ ok: true });
   const all = renderSlot(
     { component: DecisionChips },
@@ -127,12 +127,45 @@ it("lets a failed Go be retried", async () => {
   const slot = renderSlot(
     { component: DecisionChips },
     { threadId: "t1", updatedAt: 1, idle: true },
-    { rpc: { decision_options: () => ({ mode: "go", options }), thread_reply: reply } },
+    { rpc: { decision_options: () => ({ groups: [{ mode: "go" as const, question: "", options }] }), thread_reply: reply } },
   );
   fireEvent.click(await slot.findByRole("button", { name: "Go" }));
   await slot.findByRole("alert");
   fireEvent.click(slot.getByRole("button", { name: "Go" }));
   await slot.findByText("Sent “go”");
   expect(reply).toHaveBeenCalledTimes(2);
+  slot.lifecycle.unmount();
+});
+
+it("shows steps and a decision as two groups and sends both answers at once", async () => {
+  const reply = vi.fn().mockResolvedValue({ ok: true });
+  const groups = {
+    groups: [
+      { mode: "go" as const, question: "", options: [...options, { n: 3, text: "Tidy the docs", recommended: false }] },
+      {
+        mode: "choice" as const,
+        question: "which rollout?",
+        options: [
+          { n: 1, text: "10% today", recommended: true },
+          { n: 2, text: "Everyone on Monday", recommended: false },
+        ],
+      },
+    ],
+  };
+  const slot = renderSlot(
+    { component: DecisionChips },
+    { threadId: "t1", updatedAt: 1, idle: true },
+    { rpc: { decision_options: () => groups, thread_reply: reply } },
+  );
+  expect((await slot.findAllByRole("checkbox")).length).toBe(3);
+  expect(slot.getAllByRole("radio").length).toBe(2);
+  const send = slot.getByRole("button", { name: "Choose an option to send" });
+  expect(send.hasAttribute("disabled")).toBe(true);
+  fireEvent.click(slot.getByRole("checkbox", { name: /Tidy the docs/ }));
+  fireEvent.click(slot.getByRole("radio", { name: /Everyone on Monday/ }));
+  expect(reply).not.toHaveBeenCalled();
+  fireEvent.click(slot.getByRole("button", { name: "Send “go 3; decision 2”" }));
+  await slot.findByText("Sent “go 3; decision 2”");
+  expect(reply.mock.calls[0]).toEqual([{ threadId: "t1", text: "go 3; decision 2" }]);
   slot.lifecycle.unmount();
 });

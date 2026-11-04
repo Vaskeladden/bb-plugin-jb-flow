@@ -72,20 +72,27 @@ export function parseDecisionOptions(message: string, { strict = true }: { stric
   return options;
 }
 
+/** One group of options in "Your next move": a go-list or a decision. */
+export type DecisionGroup = { mode: DecisionMode; question: string; options: DecisionOption[] };
+
 /**
  * What "Your next move" offers for a thread's last reply: a status report's
- * next steps, or else a trailing numbered choice, and whether it's answered
- * with "go" or with a number.
+ * groups of next steps (a go-list, a decision, or one of each), or else a
+ * trailing numbered choice, and whether each is answered with "go" or a number.
  */
-export function nextMove(message: string): { mode: DecisionMode; options: DecisionOption[] } {
-  const steps = parseStatusReport(message, 0)?.steps;
-  if (steps) {
+export function nextMove(message: string): { groups: DecisionGroup[] } {
+  const groups = parseStatusReport(message, 0)?.stepGroups ?? [];
+  if (groups.length) {
     return {
-      mode: steps.mode,
-      options: steps.items.map((text, index) => ({ n: index + 1, text, recommended: steps.recommended.includes(index + 1) })),
+      groups: groups.map((group) => ({
+        mode: group.mode,
+        question: group.question,
+        options: group.items.map((text, index) => ({ n: index + 1, text, recommended: group.recommended.includes(index + 1) })),
+      })),
     };
   }
   const options = parseDecisionOptions(message);
+  if (!options.length) return { groups: [] };
   const tail = message.trim().split("\n").slice(-30).join("\n");
-  return { mode: options.length > 0 && GO_REPLY.test(tail) ? "go" : "choice", options };
+  return { groups: [{ mode: GO_REPLY.test(tail) ? "go" : "choice", question: "", options }] };
 }

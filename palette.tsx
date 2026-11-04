@@ -263,7 +263,9 @@ function useReplies(threadId: string | null): Reply[] {
     rpc.call("decision_options", { threadId }).then(
       (result) => {
         if (live) {
-          const options = result.options.map((option) => ({ ...option, answer: result.mode === "go" ? `go ${option.n}` : String(option.n) }));
+          // One key answers one group: the decision when there is one, else the steps.
+          const group = result.groups.find((candidate) => candidate.mode === "choice") ?? result.groups[0];
+          const options = (group?.options ?? []).map((option) => ({ ...option, answer: group?.mode === "go" ? `go ${option.n}` : String(option.n) }));
           setReplies({ threadId, options });
         }
       },

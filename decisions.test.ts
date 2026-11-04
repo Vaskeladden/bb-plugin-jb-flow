@@ -61,22 +61,27 @@ test("next move: a status report's steps, answered with go or a number", () => {
     head + "> **Path forward:** check it, then tidy\n> 1. Check the nightly run (recommended)\n> 2. Tidy the docs\n>\n> Reply **go** for all, or **go 1,3**.\n\n_2026-10-24 11:30 CEST_",
   );
   assert.deepEqual(go, {
-    mode: "go",
-    options: [
-      { n: 1, text: "Check the nightly run", recommended: true },
-      { n: 2, text: "Tidy the docs", recommended: false },
+    groups: [
+      {
+        mode: "go",
+        question: "",
+        options: [
+          { n: 1, text: "Check the nightly run", recommended: true },
+          { n: 2, text: "Tidy the docs", recommended: false },
+        ],
+      },
     ],
   });
   const choice = nextMove(head + "> **Decision needed:** which rollout?\n> 1. 10% today (recommended)\n> 2. Everyone on Monday\n>\n> Reply with the number.");
-  assert.equal(choice.mode, "choice");
-  assert.deepEqual(choice.options.map((option) => option.text), ["10% today", "Everyone on Monday"]);
+  assert.equal(choice.groups[0]!.mode, "choice");
+  assert.deepEqual(choice.groups[0]!.options.map((option) => option.text), ["10% today", "Everyone on Monday"]);
 });
 
 test("next move without a report: a trailing list, go-list when it asks for go", () => {
-  assert.equal(nextMove("> **Reply `go` for the next slice:**\n>\n> 1. Slim the reads\n> 2. Run the probe").mode, "go");
-  assert.equal(nextMove("Two ways forward:\n1. Merge now\n2. Wait for review\n\nReply **go** for all, or **go 2**.").mode, "go");
+  assert.equal(nextMove("> **Reply `go` for the next slice:**\n>\n> 1. Slim the reads\n> 2. Run the probe").groups[0]!.mode, "go");
+  assert.equal(nextMove("Two ways forward:\n1. Merge now\n2. Wait for review\n\nReply **go** for all, or **go 2**.").groups[0]!.mode, "go");
   const choice = nextMove("Which should I do?\n1. Merge now\n2. Wait for review");
-  assert.equal(choice.mode, "choice");
-  assert.equal(choice.options.length, 2);
-  assert.deepEqual(nextMove("All done, the PR is merged."), { mode: "choice", options: [] });
+  assert.equal(choice.groups[0]!.mode, "choice");
+  assert.equal(choice.groups[0]!.options.length, 2);
+  assert.deepEqual(nextMove("All done, the PR is merged."), { groups: [] });
 });

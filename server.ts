@@ -222,8 +222,13 @@ export const rpcContract = defineRpcContract({
   decision_options: {
     input: z.object({ threadId: z.string() }),
     output: z.object({
-      mode: z.enum(["go", "choice"]),
-      options: z.array(z.object({ n: z.number(), text: z.string(), recommended: z.boolean() })),
+      groups: z.array(
+        z.object({
+          mode: z.enum(["go", "choice"]),
+          question: z.string(),
+          options: z.array(z.object({ n: z.number(), text: z.string(), recommended: z.boolean() })),
+        }),
+      ),
     }),
   },
   thread_reply: {

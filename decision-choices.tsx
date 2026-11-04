@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRpc } from "@get-bb/plugin-sdk/app";
 import type { rpcContract } from "./server";
-import type { DecisionMode, DecisionOption } from "./decisions";
+import type { DecisionGroup } from "./decisions";
 import { Icon } from "@/components/ui/icon";
 import "./decision-choices.css";
 
@@ -19,10 +19,17 @@ export function DecisionChips({
   ) : null;
 }
 
+/** "go" for all steps, or "go 1,3" for the ticked ones. */
+function goText(picked: readonly number[]): string {
+  const steps = [...picked].sort((a, b) => a - b);
+  return steps.length ? `go ${steps.join(",")}` : "go";
+}
+
 function Choices({ threadId }: { threadId: string }) {
   const rpc = useRpc<typeof rpcContract>();
-  const [move, setMove] = useState<{ mode?: DecisionMode; options: DecisionOption[] }>({ options: [] });
-  const [picked, setPicked] = useState<number[]>([]);
+  const [groups, setGroups] = useState<DecisionGroup[]>([]);
+  // Per group: ticked steps for a go-list, the one chosen option for a decision.
+  const [picked, setPicked] = useState<number[][]>([]);
   const [pending, setPending] = useState<string | null>(null);
   const [sent, setSent] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -33,10 +40,10 @@ function Choices({ threadId }: { threadId: string }) {
     let live = true;
     rpc.call("decision_options", { threadId }).then(
       (result) => {
-        if (live) setMove(result);
+        if (live) setGroups(result.groups.filter((group) => group.options.length > 0));
       },
       () => {
-        if (live) setMove({ options: [] });
+        if (live) setGroups([]);
       },
     );
     return () => {
@@ -44,12 +51,22 @@ function Choices({ threadId }: { threadId: string }) {
       mounted.current = false;
     };
   }, [rpc, threadId]);
-  const { options } = move;
-  if (!options.length) return null;
-  // A go-list: tick steps, then Go sends "go" (all) or "go 1,3".
-  const go = move.mode === "go";
-  const steps = [...picked].sort((a, b) => a - b);
-  const goText = steps.length ? `go ${steps.join(",")}` : "go";
+  if (!groups.length) return null;
+  // One decision alone answers on click; anything else is picked first and sent once.
+  const instant = groups.length === 1 && groups[0]!.mode === "choice";
+  const pickedIn = (index: number) => picked[index] ?? [];
+  const toggle = (index: number, n: number, single: boolean) =>
+    setPicked((current) => {
+      const next = groups.map((_, i) => current[i] ?? []);
+      const mine = next[index]!;
+      next[index] = single ? (mine.includes(n) ? [] : [n]) : mine.includes(n) ? mine.filter((value) => value !== n) : [...mine, n];
+      return next;
+    });
+  // The reply for several groups names each answer; a lone group keeps its usual "go …" or number.
+  const missing = groups.some((group, index) => group.mode === "choice" && pickedIn(index).length === 0);
+  const composed = groups
+    .map((group, index) => (group.mode === "go" ? goText(pickedIn(index)) : groups.length > 1 ? `decision ${pickedIn(index)[0]}` : String(pickedIn(index)[0])))
+    .join("; ");
   const reply = async (text: string) => {
     if (locked.current) return;
     locked.current = true;
@@ -65,87 +82,89 @@ function Choices({ threadId }: { threadId: string }) {
       if (mounted.current) {
         locked.current = false;
         setPending(null);
-        setError(go ? "Reply could not be sent. Press Go to retry." : "Reply could not be sent. Choose an option to retry.");
+        setError(instant ? "Reply could not be sent. Choose an option to retry." : "Reply could not be sent. Press the button to retry.");
       }
     }
   };
   const busy = pending !== null || sent !== null;
+  const onlyGo = groups.length === 1 && groups[0]!.mode === "go";
+  const buttonText =
+    pending !== null
+      ? "Sending…"
+      : onlyGo
+        ? pickedIn(0).length
+          ? `Go with ${[...pickedIn(0)].sort((a, b) => a - b).join(", ")}`
+          : "Go"
+        : missing
+          ? "Choose an option to send"
+          : `Send “${composed}”`;
   return (
-    <section className="jf-choices" aria-label="Reply choices" data-mode={go ? "go" : "choice"}>
+    <section className="jf-choices" aria-label="Reply choices" data-mode={instant ? "choice" : "go"}>
       <div className="jf-choices-heading">
         <Icon name="MessageCircle" className="size-3.5" />
         <span>YOUR NEXT MOVE</span>
-        <span className="jf-choices-hint">{go ? "Pick steps, or Go for all" : "Choose a reply"}</span>
+        <span className="jf-choices-hint">{instant ? "Choose a reply" : onlyGo ? "Pick steps, or Go for all" : "Pick steps and an answer, then send"}</span>
       </div>
-      <div className="jf-choices-list">
-        {options.map((option) => {
-          const text = String(option.n);
-          const selected = go ? picked.includes(option.n) : pending === text || sent === text;
-          return go ? (
-            <button
-              key={option.n}
-              type="button"
-              role="checkbox"
-              className="jf-choice"
-              data-recommended={option.recommended}
-              data-selected={selected}
-              aria-checked={selected}
-              disabled={busy}
-              aria-label={`Step ${option.n}: ${option.text}${option.recommended ? " (recommended)" : ""}`}
-              title={option.text}
-              onClick={() =>
-                setPicked((current) => (current.includes(option.n) ? current.filter((n) => n !== option.n) : [...current, option.n]))
-              }
-            >
-              <span className="jf-choice-number" aria-hidden="true">
-                {selected ? <Icon name="Check" className="size-3" /> : option.n}
-              </span>
-              <span className="jf-choice-text">{option.text}</span>
-              {option.recommended && <span className="jf-choice-meta">Recommended</span>}
-            </button>
-          ) : (
-            <button
-              key={option.n}
-              type="button"
-              className="jf-choice"
-              data-recommended={option.recommended}
-              data-selected={selected}
-              disabled={busy}
-              aria-label={`Reply ${option.n}: ${option.text}${option.recommended ? " (recommended)" : ""}`}
-              aria-busy={pending === text}
-              title={option.text}
-              onClick={() => void reply(text)}
-            >
-              <span className="jf-choice-number" aria-hidden="true">
-                {sent === text ? (
-                  <Icon name="Check" className="size-3" />
-                ) : pending === text ? (
-                  <Icon name="Loader" className="jf-choice-spinner size-3" />
-                ) : (
-                  option.n
-                )}
-              </span>
-              <span className="jf-choice-text">{option.text}</span>
-              {(option.recommended || pending === text || sent === text) && (
-                <span className="jf-choice-meta">
-                  {pending === text ? "Sending…" : sent === text ? "Reply sent" : "Recommended"}
-                </span>
-              )}
-            </button>
-          );
-        })}
-      </div>
-      {go && (
+      {groups.map((group, index) => {
+        const go = group.mode === "go";
+        return (
+          <div key={index} className="jf-choices-group" role="group" aria-label={go ? "Steps" : group.question || "Decision"}>
+            {groups.length > 1 && (
+              <p className="jf-choices-question">{go ? "Steps" : group.question ? `Decision: ${group.question}` : "Decision"}</p>
+            )}
+            <div className="jf-choices-list">
+              {group.options.map((option) => {
+                const text = String(option.n);
+                const selected = instant ? pending === text || sent === text : pickedIn(index).includes(option.n);
+                const label = `${go ? "Step" : instant ? "Reply" : "Option"} ${option.n}: ${option.text}${option.recommended ? " (recommended)" : ""}`;
+                return (
+                  <button
+                    key={option.n}
+                    type="button"
+                    role={go ? "checkbox" : instant ? undefined : "radio"}
+                    className="jf-choice"
+                    data-recommended={option.recommended}
+                    data-selected={selected}
+                    aria-checked={go || !instant ? selected : undefined}
+                    disabled={busy}
+                    aria-label={label}
+                    aria-busy={instant && pending === text}
+                    title={option.text}
+                    onClick={() => (instant ? void reply(text) : toggle(index, option.n, !go))}
+                  >
+                    <span className="jf-choice-number" aria-hidden="true">
+                      {instant && pending === text ? (
+                        <Icon name="Loader" className="jf-choice-spinner size-3" />
+                      ) : selected ? (
+                        <Icon name="Check" className="size-3" />
+                      ) : (
+                        option.n
+                      )}
+                    </span>
+                    <span className="jf-choice-text">{option.text}</span>
+                    {(option.recommended || (instant && (pending === text || sent === text))) && (
+                      <span className="jf-choice-meta">
+                        {instant && pending === text ? "Sending…" : instant && sent === text ? "Reply sent" : "Recommended"}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+      {!instant && (
         <div className="jf-choices-actions">
           {sent === null ? (
             <button
               type="button"
               className="jf-choices-go"
-              disabled={pending !== null}
+              disabled={pending !== null || missing}
               aria-busy={pending !== null}
-              onClick={() => void reply(goText)}
+              onClick={() => void reply(onlyGo ? goText(pickedIn(0)) : composed)}
             >
-              {pending !== null ? "Sending…" : steps.length ? `Go with ${steps.join(", ")}` : "Go"}
+              {buttonText}
             </button>
           ) : (
             <span role="status">Sent “{sent}”</span>
@@ -157,7 +176,7 @@ function Choices({ threadId }: { threadId: string }) {
           {error}
         </p>
       )}
-      {!go && sent !== null && (
+      {instant && sent !== null && (
         <span className="jf-choices-confirmation" role="status">
           Reply {sent} sent
         </span>

@@ -16,17 +16,21 @@ export const statusReportSchema = z.object({
     )
     .max(12),
   /**
-   * The report's "Next steps": steps to run with "go" (all, or "go 1,3"), or a
-   * decision answered with a number. Optional: older saved reports lack it.
+   * The report's "Next steps", one group per **Path forward:** or **Decision
+   * needed:** block: steps to run with "go" (all, or "go 1,3"), or a decision
+   * answered with a number. A report can hold both. Optional: older saved
+   * reports lack it.
    */
-  steps: z
-    .object({
-      mode: z.enum(["go", "choice"]),
-      question: z.string().max(300),
-      items: z.array(z.string().max(300)).max(9),
-      recommended: z.array(z.number()).max(9),
-    })
-    .nullable()
+  stepGroups: z
+    .array(
+      z.object({
+        mode: z.enum(["go", "choice"]),
+        question: z.string().max(300),
+        items: z.array(z.string().max(300)).max(9),
+        recommended: z.array(z.number()).max(9),
+      }),
+    )
+    .max(3)
     .optional(),
   /** "Doing now: …": the agent is already carrying on, nothing to pick. */
   doingNow: z.string().max(500).optional(),
@@ -97,14 +101,11 @@ export function parseStatusReport(
   return { ...fields, milestones, ...parseNextSteps(reply), capturedAt };
 }
 
-/** The "### Next steps" section: a go-list, a numbered decision, or "Doing now". */
-export function parseNextSteps(reply: string): Pick<StatusReport, "steps" | "doingNow"> {
-  const section =
-    /(?:^|\n)#{2,4}\s+Next steps?\s*\r?\n([\s\S]*?)(?=\n#{1,4}\s|$)/i.exec(reply)?.[1] ?? "";
-  if (!section.trim()) return {};
-  const lines = section.split("\n").map((line) => line.replace(/^\s*(?:>\s?)+/, ""));
+export type StepGroup = NonNullable<StatusReport["stepGroups"]>[number];
+
+/** One block of numbered lines: a go-list, or a decision when it asks one. */
+function stepGroup(lines: readonly string[]): StepGroup | null {
   const text = lines.join("\n");
-  const doing = /\*\*Doing now:\*\*\s*(.+)/i.exec(text)?.[1];
   const question = /\*\*Decision needed:\*\*\s*(.+)/i.exec(text)?.[1];
   const items: string[] = [];
   const recommended: number[] = [];
@@ -115,15 +116,31 @@ export function parseNextSteps(reply: string): Pick<StatusReport, "steps" | "doi
     items.push(plain(match[2]!.replace(/\s*\(recommended\)\s*/i, " ")).slice(0, 300));
     if (items.length === 9) break;
   }
+  if (!items.length) return null;
   // "**Recommended:** 1" or "1,3" names steps by number.
   const named = /\*\*Recommended:?\*\*:?\s*([\d,\s]+)(?:$|\n)/i.exec(text)?.[1];
   for (const n of named?.match(/\d+/g) ?? []) if (Number(n) <= items.length && !recommended.includes(Number(n))) recommended.push(Number(n));
-  return {
-    steps: items.length
-      ? { mode: question ? "choice" : "go", question: question ? plain(question).slice(0, 300) : "", items, recommended }
-      : null,
-    ...(doing ? { doingNow: plain(doing).slice(0, 500) } : {}),
-  };
+  return { mode: question ? "choice" : "go", question: question ? plain(question).slice(0, 300) : "", items, recommended };
+}
+
+/**
+ * The "### Next steps" section: go-lists and numbered decisions, one group per
+ * **Path forward:** or **Decision needed:** block, or "Doing now".
+ */
+export function parseNextSteps(reply: string): Pick<StatusReport, "stepGroups" | "doingNow"> {
+  const section =
+    /(?:^|\n)#{2,4}\s+Next steps?\s*\r?\n([\s\S]*?)(?=\n#{1,4}\s|$)/i.exec(reply)?.[1] ?? "";
+  if (!section.trim()) return {};
+  const lines = section.split("\n").map((line) => line.replace(/^\s*(?:>\s?)+/, ""));
+  const doing = /\*\*Doing now:\*\*\s*(.+)/i.exec(lines.join("\n"))?.[1];
+  // A new group starts at each heading line; lines before the first belong to it.
+  const blocks: string[][] = [[]];
+  for (const line of lines) {
+    if (/\*\*(Path forward|Decision needed):\*\*/i.test(line) && blocks[blocks.length - 1]!.some((l) => /^\s*\d+[.)]\s/.test(l))) blocks.push([]);
+    blocks[blocks.length - 1]!.push(line);
+  }
+  const stepGroups = blocks.map(stepGroup).filter((group): group is StepGroup => group !== null).slice(0, 3);
+  return { stepGroups, ...(doing ? { doingNow: plain(doing).slice(0, 500) } : {}) };
 }
 
 export function recordThreadStatus(

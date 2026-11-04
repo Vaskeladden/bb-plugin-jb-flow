@@ -109,7 +109,7 @@ async function mount(options: MountOptions = {}) {
       rpc: {
         state_get: () => state,
         workspaces_get: () => options.workspaces ?? { workspaces: [], threadWorkspaces: {} },
-        decision_options: () => ({ options: [] }),
+        decision_options: () => ({ groups: [] }),
         snooze: (input: { threadId: string; until?: number }) => ({ until: input.until ?? NOW, note: null, fromSectionId: null, snoozedAt: NOW }),
         thread_reply: () => ({ ok: true }),
         next_needs_me: () => ({ opened: null }),
@@ -316,7 +316,7 @@ describe("palette thread actions", () => {
   it("answers a numbered decision and runs bb's own actions", async () => {
     const slot = await mount({
       threadActions: hostActions,
-      rpc: { decision_options: () => ({ options: [{ n: 1, text: "Ship it", recommended: true }, { n: 2, text: "Wait", recommended: false }] }) },
+      rpc: { decision_options: () => ({ groups: [{ mode: "choice", question: "", options: [{ n: 1, text: "Ship it", recommended: true }, { n: 2, text: "Wait", recommended: false }] }] }) },
     });
     let input = await openPalette(slot);
     fireEvent.keyDown(input, { key: "Tab" });
@@ -334,7 +334,7 @@ describe("palette thread actions", () => {
 
   it("answers a go-list step with go and its number", async () => {
     const slot = await mount({
-      rpc: { decision_options: () => ({ mode: "go", options: [{ n: 1, text: "Ship it", recommended: true }, { n: 2, text: "Tidy the docs", recommended: false }] }) },
+      rpc: { decision_options: () => ({ groups: [{ mode: "go", question: "", options: [{ n: 1, text: "Ship it", recommended: true }, { n: 2, text: "Tidy the docs", recommended: false }] }] }) },
     });
     const input = await openPalette(slot);
     fireEvent.keyDown(input, { key: "Tab" });

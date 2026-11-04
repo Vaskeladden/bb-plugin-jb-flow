@@ -31,7 +31,7 @@ it("reads a status report template and reported milestone values without inventi
     next: "Review it.",
     blocked: "Waiting for review.",
     // A bulleted "Next steps" can't be picked by number.
-    steps: null,
+    stepGroups: [],
     capturedAt: 10,
     milestones: [
       { label: "Build", percent: 100 },
@@ -132,20 +132,22 @@ it("reads next steps to run with go, a numbered decision, and Doing now", () => 
     head + "### Next steps\n> [!TIP]\n> **Recommended:** 1\n> 1. Check the nightly run · first unattended run\n> 2. Try the staging app\n>\n> Reply **go** for all, or **go 1,3**.\n\n_2026-10-13 00:29 CEST_",
     1,
   );
-  expect(go?.steps).toEqual({
-    mode: "go",
-    question: "",
-    items: ["Check the nightly run · first unattended run", "Try the staging app"],
-    recommended: [1],
-  });
+  expect(go?.stepGroups).toEqual([
+    {
+      mode: "go",
+      question: "",
+      items: ["Check the nightly run · first unattended run", "Try the staging app"],
+      recommended: [1],
+    },
+  ]);
   const choice = parseStatusReport(
     head + "### Next steps\n> [!TIP]\n> **Decision needed:** which rollout?\n> 1. 10% today (recommended)\n> 2. Everyone on Monday\n>\n> Reply with the number.",
     1,
   );
-  expect(choice?.steps).toMatchObject({ mode: "choice", question: "which rollout?", items: ["10% today", "Everyone on Monday"], recommended: [1] });
+  expect(choice?.stepGroups).toMatchObject([{ mode: "choice", question: "which rollout?", items: ["10% today", "Everyone on Monday"], recommended: [1] }]);
   const doing = parseStatusReport(head + "### Next steps\n**Doing now:** opening the PR and waiting for CI.", 1);
   expect(doing?.doingNow).toBe("opening the PR and waiting for CI.");
-  expect(doing?.steps).toBeNull();
+  expect(doing?.stepGroups).toEqual([]);
 });
 
 it("reads a go-list under a **Path forward:** line without taking it for a recommendation", () => {
@@ -153,12 +155,26 @@ it("reads a go-list under a **Path forward:** line without taking it for a recom
     "**Goal:** Ship it\n**Done:** Merged the fix\n\n### Next steps\n> [!TIP]\n> **Path forward:** finish the menu, then the docs\n> 1. Add the item · one step instead of three\n> 2. Update the README · keep docs current\n>\n> Reply **go** for all, or **go 1,3**.\n\n_2026-10-23 12:13 CEST_",
     1,
   );
-  expect(report?.steps).toEqual({
-    mode: "go",
-    question: "",
-    items: ["Add the item · one step instead of three", "Update the README · keep docs current"],
-    recommended: [],
-  });
+  expect(report?.stepGroups).toEqual([
+    {
+      mode: "go",
+      question: "",
+      items: ["Add the item · one step instead of three", "Update the README · keep docs current"],
+      recommended: [],
+    },
+  ]);
+});
+
+it("reads steps and a decision in one report as two groups, not one list of five", () => {
+  const report = parseStatusReport(
+    "**Goal:** Ship it\n**Done:** Merged the fix\n\n### Next steps\n> [!TIP]\n> **Path forward:** tidy, then ship\n> 1. Fix the test · red on main\n> 2. Update the docs\n> 3. Merge · green\n>\n> Reply **go** for all, or **go 1,3**.\n\n> [!TIP]\n> **Decision needed:** which rollout?\n> 1. 10% today (recommended)\n> 2. Everyone on Monday\n>\n> Reply with the number.",
+    1,
+  );
+  expect(report?.stepGroups?.map((group) => [group.mode, group.items.length])).toEqual([
+    ["go", 3],
+    ["choice", 2],
+  ]);
+  expect(report?.stepGroups?.[1]).toMatchObject({ question: "which rollout?", recommended: [1] });
 });
 
 it("hands back with the status prompt the user set, or the built-in one", () => {
