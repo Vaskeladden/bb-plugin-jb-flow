@@ -139,7 +139,7 @@ Every PR a thread opens with `gh pr create` is linked to it automatically, in an
 - `bb jb-flow prs --self [--json]`: the thread's PRs, in stack order, with each one's state (checks, review, conflicts, merged).
 - `bb jb-flow pr-link <url> --self [--remove]`: link or unlink a PR that was opened another way, for example through a GitHub MCP tool or by someone else.
 - `pr_status` (agent tool) returns the state of all of them in one call, from the plugin's cache, or live with `refresh: true`. Use it instead of `gh pr view` / `gh pr checks` for state; use `gh` only for full review comments or logs.
-- **One Actions run:** to wait for a run that is not a PR check, such as a deploy after a merge or a release job, call `wait_for_run` with its id or URL and end your turn. You get one message when it finishes, with the failed jobs and log on failure. The thread shows as waiting meanwhile. Do not watch runs with `gh run watch`, sleep loops or background shell jobs.
+- **One Actions run:** to wait for a run that is not a PR check, such as a deploy after a merge or a release job, call `wait_for_run` with its id or URL and end your turn (CLI: `bb jb-flow wait-run <run-id|url> --self`). You get one message when it finishes, with the failed jobs and log on failure. The thread shows as waiting meanwhile. Do not watch runs with `gh run watch`, sleep loops or background shell jobs.
 - `wait_for_ci` with no `pr` watches every open PR this thread created. Pass `repo` (owner/name) for a PR in another repo that this thread didn't create. News from all of a thread's PRs arrives as one message per check cycle.
 
 ## Decision buttons

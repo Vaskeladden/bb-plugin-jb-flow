@@ -1192,6 +1192,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
     "  bb jb-flow needs-me [--json]                         Threads waiting on you",
     "  bb jb-flow next                                      Open the next thread that needs you",
     "  bb jb-flow wait-ci [--pr <n>] [--repo owner/name] [--for checks|reviews|both] [--self|<thread-id>]",
+    "  bb jb-flow wait-run <run-id|url> [--repo owner/name] [--self|<thread-id>]  Message a thread when an Actions run ends",
     "  bb jb-flow watches [--json]                          Auto-continues, release waiters, CI watches",
     "  bb jb-flow prs [--self|<thread-id>] [--json]         PRs a thread created (all repos, stack order)",
     "  bb jb-flow pr-link <pr-url> [--self|<thread-id>] [--remove]",
@@ -1317,6 +1318,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
       { name: "needs-me", summary: "List threads waiting on you", usage: "bb jb-flow needs-me [--json]" },
       { name: "next", summary: "Open the next thread that needs you", usage: "bb jb-flow next" },
       { name: "wait-ci", summary: "Message a thread when its PR's CI finishes or reviews arrive", usage: "bb jb-flow wait-ci [--pr <n>] [--for checks|reviews|both] [--self|<thread-id>]" },
+      { name: "wait-run", summary: "Message a thread when one GitHub Actions run finishes", usage: "bb jb-flow wait-run <run-id|url> [--repo owner/name] [--self|<thread-id>]" },
       { name: "prs", summary: "List the PRs a thread created, across repos, in stack order", usage: "bb jb-flow prs [--self|<thread-id>] [--json]" },
       { name: "pr-link", summary: "Link (or --remove) a PR to a thread", usage: "bb jb-flow pr-link <pr-url> [--self|<thread-id>] [--remove]" },
       { name: "watches", summary: "List auto-continues, release waiters and CI watches", usage: "bb jb-flow watches [--json]" },
@@ -1409,6 +1411,16 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
               exitCode: 0,
               stdout: `Watching ${watches.map((watch) => `${watch.repo}#${watch.pr}`).join(", ")} for ${watches[0]!.watchFor}; ${threadId} will be messaged.`,
             };
+          }
+          case "wait-run": {
+            const repoFlag = args.indexOf("--repo");
+            const rest = args.filter((_, index) => repoFlag === -1 || (index !== repoFlag && index !== repoFlag + 1));
+            const run = rest.find((arg) => !arg.startsWith("--") && arg !== rest.find((value) => value === ctx.threadId));
+            if (run === undefined) return { exitCode: 2, stderr: "Usage: bb jb-flow wait-run <run-id|url> [--repo owner/name] [--self|<thread-id>]" };
+            const threadId = resolveThread(rest.find((arg) => arg !== run) ?? "--self");
+            if (threadId === undefined) break;
+            const watch = await watchers.watchRun(threadId, run, repoFlag === -1 ? undefined : args[repoFlag + 1]);
+            return { exitCode: 0, stdout: `Watching ${watch.repo} run ${watch.runId} (${watch.label}); ${threadId} will be messaged.` };
           }
           case "prs": {
             const threadId = resolveThread(args[0] ?? "--self");

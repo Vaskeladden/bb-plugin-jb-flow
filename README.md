@@ -446,6 +446,7 @@ bb jb-flow unsnooze <thread-id|--self>
 bb jb-flow snoozed [--json]
 bb jb-flow digest [--refresh] [--json]
 bb jb-flow wait-ci [--pr <n>] [--repo owner/name] [--for checks|reviews|both] [--self|<thread-id>]
+bb jb-flow wait-run <run-id|url> [--repo owner/name] [--self|<thread-id>]
 bb jb-flow release-wait [--self|<thread-id>]
 bb jb-flow prs [--self|<thread-id>] [--json]
 bb jb-flow pr-link <pr-url> [--self|<thread-id>] [--remove]
