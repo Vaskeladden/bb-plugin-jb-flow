@@ -105,7 +105,12 @@ export function runInfo(running: FlowState["running"][string] | undefined, now: 
 
 // --- row status icon ---------------------------------------------------------------
 // One glyph that answers "what is this thread doing / waiting on?", replacing the
-// provider badge. Priority: needs you > error > running > watched > PR > finished.
+// provider badge. Priority: needs you > error > running > watched > waiting > PR > finished.
+
+/** The agent's last turn handed the next step to a later report, or to someone else. */
+export type RowWaiting = { kind: "promised" | "others"; since: number };
+/** A promise to report back counts as stalled after this long (matches awaiting.ts). */
+const STALLED_AFTER_MS = 60 * 60_000;
 
 export type RowStatus = { glyph: GlyphName; tone: string; label: string; spin?: boolean };
 export function rowStatus(
@@ -114,6 +119,8 @@ export function rowStatus(
   watching: FlowState["watching"][string] | undefined,
   prs: readonly ThreadPr[],
   run: RunInfo | null,
+  waiting?: RowWaiting,
+  now: number = Date.now(),
 ): RowStatus {
   if (thread.hasPendingInteraction || thread.indicator === "waiting-for-input") {
     return { glyph: "question", tone: "text-amber-500", label: thread.indicatorLabel ?? "Needs your input" };
@@ -128,6 +135,13 @@ export function rowStatus(
   if (watching?.kind === "ci") return { glyph: "hourglass", tone: "text-sky-500", label: watching.label };
   if (watching?.kind === "release") return { glyph: "rocket", tone: "text-violet-500", label: watching.label };
   if (watching?.kind === "continue") return { glyph: "alarm", tone: "text-amber-500", label: watching.label };
+  if (waiting?.kind === "others") return { glyph: "hourglass", tone: "text-muted-foreground", label: "Waiting on someone else" };
+  if (waiting?.kind === "promised") {
+    const idle = now - waiting.since;
+    return idle > STALLED_AFTER_MS
+      ? { glyph: "hourglass", tone: "text-orange-500", label: `Stalled: said it would report back, nothing running for ${duration(idle)}` }
+      : { glyph: "hourglass", tone: "text-muted-foreground", label: "Waiting: the agent will report back" };
+  }
   const worst = worstPr(prs);
   if (worst) {
     const label = prs.length === 1 ? `PR #${worst.number}: ${attentionLabel(worst.attention)}` : `${prs.length} PRs; worst: #${worst.number} ${attentionLabel(worst.attention)}`;

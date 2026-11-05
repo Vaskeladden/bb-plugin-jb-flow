@@ -53,6 +53,7 @@ import {
   duration,
   prGlyph,
   rowStatus,
+  type RowWaiting,
   runInfo,
   threadPrs,
   useNow,
@@ -528,6 +529,7 @@ function ThreadRow({
   tags,
   snoozeUntil,
   watching,
+  waiting,
   createdPrs,
   running,
   now,
@@ -552,6 +554,7 @@ function ThreadRow({
   tags: readonly string[];
   snoozeUntil: number | undefined;
   watching: FlowState["watching"][string] | undefined;
+  waiting: RowWaiting | undefined;
   createdPrs: FlowState["threadPrs"][string] | undefined;
   running: FlowState["running"][string] | undefined;
   now: number;
@@ -580,7 +583,7 @@ function ThreadRow({
   const { pullRequest } = useSidebarThreadPullRequest(thread.id);
   const prs = threadPrs(createdPrs, pullRequest);
   const run = busy ? runInfo(running, now) : null;
-  const status = rowStatus(thread, busy, watching, prs, run);
+  const status = rowStatus(thread, busy, watching, prs, run, waiting, now);
   const worst = worstPr(prs);
   const openPrs = prs.filter((pr) => pr.state === "open" || pr.state === "draft");
   const rpc = useRpc<typeof rpcContract>();
@@ -1159,6 +1162,14 @@ function useSectionDrag(onMove: (key: string, target: string, after: boolean) =>
     [onMove],
   );
   return { start, dragging };
+}
+
+/** What an idle thread's agent said it waits for, as the row shows it. */
+function rowWaiting(state: FlowState | null | undefined, threadId: string): RowWaiting | undefined {
+  const others = state?.waitingOthers[threadId];
+  if (others !== undefined) return { kind: "others", since: others };
+  const promised = state?.promised[threadId];
+  return promised === undefined ? undefined : { kind: "promised", since: promised };
 }
 
 /** Sent by "Nudge" on a stalled thread. */
@@ -1791,6 +1802,7 @@ function TriageThreadList({
                     tags={tags[thread.id] ?? []}
                     snoozeUntil={state?.snoozes[thread.id]?.until}
                     watching={state?.watching[thread.id]}
+                    waiting={rowWaiting(state, thread.id)}
                     createdPrs={state?.threadPrs[thread.id]}
                     running={state?.running[thread.id]}
                     now={now}
