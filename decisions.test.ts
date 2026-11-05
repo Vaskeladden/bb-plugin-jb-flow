@@ -92,3 +92,37 @@ test("next move names the question of a list outside a report", () => {
   assert.equal(nextMove("> [!TIP]\n> 1. Merge now (recommended)\n> 2. Wait").groups[0]!.question, "");
   assert.equal(nextMove("> **Recommended:** 1\n> 1. Merge now\n> 2. Wait\n>\n> Reply **go** for all, or **go 1,3**.").groups[0]!.question, "");
 });
+
+test("a reply in the Donkey format offers each decision with its question", () => {
+  const reply = [
+    "**Goal:** Customers get one e-mail.",
+    "",
+    "**Blocked:** Two parts send the same e-mail.",
+    "",
+    "### The problem",
+    "Two parts of the system both send it.",
+    "",
+    "### Example",
+    "Anna reports a problem and gets two e-mails.",
+    "",
+    "### Next steps",
+    "> [!TIP]",
+    "> **Decision needed:** Which part should send it?",
+    "> 1. The new one · simpler (recommended)",
+    "> 2. The old one · no change for partners",
+    ">",
+    "> Reply with the number.",
+    "",
+    "> [!TIP]",
+    "> **Decision needed:** Tell customers about the change?",
+    "> 1. Yes · fewer questions",
+    "> 2. No · nothing to write (recommended)",
+    ">",
+    "> Reply with the number.",
+  ].join("\n");
+  const { groups } = nextMove(reply);
+  assert.deepEqual(groups.map((group) => [group.mode, group.question, group.options.length]), [
+    ["choice", "Which part should send it?", 2],
+    ["choice", "Tell customers about the change?", 2],
+  ]);
+});

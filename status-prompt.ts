@@ -34,6 +34,43 @@ export const DEFAULT_STATUS_PROMPT = [
   "> Reply with the number.",
 ].join("\n");
 
+// What the Donkey button sends when the Donkey prompt setting is empty: the real
+// problem in plain words with an example, then the decisions in the format
+// "Your next move" turns into buttons (a report with Goal and Blocked, and one
+// **Decision needed:** callout per question under ### Next steps).
+export const DEFAULT_DONKEY_PROMPT = [
+  "What is the real problem here? Explain it to me like I'm a donkey, then stop.",
+  "",
+  "Use very short sentences and plain everyday words. No file names, ids, function names or jargon. Use a concrete example from this work: what happens today, step by step, and what goes wrong. Write in the language I write to you in.",
+  "",
+  "Use exactly this format, with a blank line between the fields:",
+  "",
+  "**Goal:** <what we are trying to get, one short sentence>",
+  "",
+  "**Blocked:** <the problem in one short sentence>",
+  "",
+  "### The problem",
+  "<two to five short sentences: what is wrong and why it matters>",
+  "",
+  "### Example",
+  "<a concrete example: what happens today, and what should happen instead>",
+  "",
+  "### Next steps",
+  "Ask me each decision I must make in its own callout. Give two to four options, mark one recommended, and say in a few words what each option means for me:",
+  "> [!TIP]",
+  "> **Decision needed:** <question in plain words>",
+  "> 1. <option> · <what it means for me> (recommended)",
+  "> 2. <option> · <what it means for me>",
+  ">",
+  "> Reply with the number.",
+  "",
+  "If nothing needs a decision from me, write **Next:** with what you will do instead, and leave out the callout.",
+].join("\n");
+
+export function donkeyPrompt(setting: unknown): string {
+  return typeof setting === "string" && setting.trim() !== "" ? setting : DEFAULT_DONKEY_PROMPT;
+}
+
 export function statusPrompt(setting: unknown): string {
   return typeof setting === "string" && setting.trim() !== "" ? setting : DEFAULT_STATUS_PROMPT;
 }

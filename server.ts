@@ -351,6 +351,14 @@ export default async function plugin(bb: BbPluginApi) {
       experimental_multiline: true,
       default: "",
     },
+    donkeyPrompt: {
+      type: "string",
+      label: "Donkey prompt",
+      description:
+        "What the Donkey button sends: explain the real problem in plain words with an example, and ask each decision as a **Decision needed:** callout so Your next move offers buttons. Leave empty for the built-in prompt.",
+      experimental_multiline: true,
+      default: "",
+    },
     declaredState: {
       type: "boolean",
       label: "Agents state what they wait for",

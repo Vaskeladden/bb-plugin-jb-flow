@@ -522,6 +522,14 @@ it("requests the actual Status prompt only on click and leaves the composer draf
       text: expect.stringContaining("**Goal:**"),
     }),
   ]);
+  fireEvent.click(slot.getByRole("button", { name: "Donkey" }));
+  await waitFor(() => expect(request).toHaveBeenCalledTimes(2));
+  expect(request.mock.calls[1]).toEqual([
+    expect.objectContaining({
+      threadId: "t1",
+      text: expect.stringContaining("**Decision needed:**"),
+    }),
+  ]);
   expect(slot.inspection.composer.text).toBe("My unsent draft");
   slot.lifecycle.unmount();
 });

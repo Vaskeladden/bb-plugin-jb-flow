@@ -17,7 +17,7 @@ import "./live-activity.css";
 import { useMonitorCollapse } from "./monitor-collapse";
 import type { rpcContract } from "./server";
 import type { ThreadStatus } from "./thread-status";
-import { statusPrompt } from "./status-prompt";
+import { donkeyPrompt, statusPrompt } from "./status-prompt";
 
 type Sdk = ReturnType<typeof useSdk>;
 type Timeline = Awaited<ReturnType<Sdk["threads"]["timeline"]>>;
@@ -500,6 +500,7 @@ export function ActivityCard({
   monitorStale = false,
   hasLiveData = true,
   onRequestStatus,
+  onRequestDonkey,
   autoContinue,
   onToggleAutoContinue,
   watches = [],
@@ -516,6 +517,8 @@ export function ActivityCard({
   monitorStale?: boolean;
   hasLiveData?: boolean;
   onRequestStatus?: () => Promise<void>;
+  /** Asks the agent to explain the problem in plain words, with decisions as buttons. */
+  onRequestDonkey?: () => Promise<void>;
   data: ActivityData;
   running: boolean;
   startedAt: number | null;
@@ -566,18 +569,20 @@ export function ActivityCard({
         : null;
   const canRequest = !active && !!onRequestStatus;
   const outdated = canRequest && outdatedReason !== null;
-  const requestStatus = async () => {
-    if (!onRequestStatus) return;
+  const send = async (request: (() => Promise<void>) | undefined, failure: string) => {
+    if (!request) return;
     setRequesting(true);
     setStatusError(null);
     try {
-      await onRequestStatus();
+      await request();
     } catch {
-      setStatusError("Could not request status. Try again.");
+      setStatusError(failure);
     } finally {
       setRequesting(false);
     }
   };
+  const requestStatus = () => send(onRequestStatus, "Could not request status. Try again.");
+  const requestDonkey = () => send(onRequestDonkey, "Could not ask for the explanation. Try again.");
   const steps = tasks.flatMap((task) => task.workflow?.agents ?? []);
   const finishedSteps = steps.filter(
     (step) => step.state === "done" || step.state === "skipped",
@@ -639,6 +644,17 @@ export function ActivityCard({
             title="Ask the agent for a fresh status report"
           >
             {requesting ? "Requesting…" : outdated ? "Update status" : "Refresh"}
+          </button>
+        )}
+        {canRequest && onRequestDonkey && (
+          <button
+            type="button"
+            className="jf-monitor-update jf-monitor-update-quiet"
+            disabled={requesting}
+            onClick={requestDonkey}
+            title="Ask the agent what the real problem is, in plain words with an example, and for decisions you can answer with a click"
+          >
+            Donkey
           </button>
         )}
         {!collapsed && (
@@ -1096,6 +1112,9 @@ export function LiveActivityBanner({
       onCancelWatch={wakeups.cancel}
       onRequestStatus={async () => {
         await rpc.call("thread_reply", { threadId, text: statusPrompt(values?.statusPrompt) });
+      }}
+      onRequestDonkey={async () => {
+        await rpc.call("thread_reply", { threadId, text: donkeyPrompt(values?.donkeyPrompt) });
       }}
       running={running}
       startedAt={runningSince[threadId]?.since ?? taskStart}
