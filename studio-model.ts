@@ -24,19 +24,20 @@ type WorkflowFacts = Pick<
 >;
 
 /**
- * Blocked on you (prompt, permission, failure), or finished unread with a last
- * message that asks you something. Unread status updates don't count: they stay
- * in their section, in bold.
+ * Blocked on you (prompt, permission, failure), or idle with a last message that
+ * asks you something. The next action decides, not read state: bold shows unread,
+ * and a read question still waits for your answer.
  */
 export function needsMe(
-  thread: Pick<PluginSidebarThread, "id" | "hasPendingInteraction" | "indicator" | "isUnread" | "status">,
+  thread: Pick<PluginSidebarThread, "id" | "hasPendingInteraction" | "indicator" | "status">,
   awaiting: Record<string, number> | undefined,
 ): boolean {
   return (
     thread.hasPendingInteraction ||
     thread.indicator === "waiting-for-input" ||
+    thread.status === "error" ||
     thread.indicator === "unread-error" ||
-    (thread.isUnread && thread.status === "idle" && awaiting?.[thread.id] !== undefined)
+    (thread.status === "idle" && awaiting?.[thread.id] !== undefined)
   );
 }
 

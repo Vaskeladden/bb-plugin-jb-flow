@@ -1185,13 +1185,12 @@ const DONE_AFTER_MS = 2 * 3_600_000;
 
 // --- smart filters (computed sets, not your sections) --------------------------------
 
-type SmartId = "needs" | "stalled" | "yourMove" | "running" | "prAction" | "readyToMerge" | "autopilot" | "done";
+type SmartId = "needs" | "stalled" | "running" | "prAction" | "readyToMerge" | "autopilot" | "done";
 /** A smart filter, or one machine's threads (`machine:<hostId>`). */
 type Filter = SmartId | `machine:${string}`;
 const SMART: Array<{ id: SmartId; label: string; glyph: GlyphName; tone: string; hint: string }> = [
-  { id: "needs", label: "Needs me", glyph: "question", tone: "text-amber-500", hint: "Waiting for your input, failed, or finished and unread" },
+  { id: "needs", label: "Needs me", glyph: "question", tone: "text-amber-500", hint: "Waiting for your input, asking you something, or failed" },
   { id: "stalled", label: "Stalled", glyph: "hourglass", tone: "text-orange-500", hint: "The agent said it would report back, but has been idle for over an hour. Nudge it" },
-  { id: "yourMove", label: "Your move", glyph: "question", tone: "text-sky-500", hint: "You've read it, but the agent's last message asks you to decide, answer or act" },
   { id: "running", label: "Running", glyph: "spinner", tone: "text-sky-500", hint: "Agents working right now" },
   { id: "prAction", label: "PR action", glyph: "pr", tone: "text-red-500", hint: "An open PR has failing checks, requested changes or conflicts" },
   { id: "readyToMerge", label: "Ready to merge", glyph: "pr", tone: "text-green-500", hint: "An open PR is green and ready" },
@@ -1490,7 +1489,6 @@ function TriageThreadList({
     const sets: Record<SmartId, (thread: PluginSidebarThread) => boolean> = {
       needs,
       stalled: (thread) => isStalled(thread),
-      yourMove: (thread) => !busy(thread) && !needs(thread) && state?.awaiting[thread.id] !== undefined,
       running: busy,
       prAction: (thread) =>
         !busy(thread) && openPrs(thread).some((pr) => ["checks_failed", "changes_requested", "conflicts"].includes(pr.attention)),

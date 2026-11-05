@@ -272,7 +272,7 @@ opens the regular thread page for the full thread-specific tools. Deep links and
 browser back/forward work between the overview and thread workspaces.
 
 Status counts apply to the selected project, independently of title search.
-Needs-you includes pending input, failed threads, unread requests for a decision,
+Needs-you includes pending input, failed threads, requests for a decision (read or not),
 and linked PRs with failed checks, conflicts, or requested changes. Ready-to-merge
 and PR-settled states use the PRs tracked by JB Flow; idle threads are not assumed
 complete. Hidden and archived threads are excluded. The review panel additionally
@@ -291,7 +291,7 @@ tests in `npm test`.
 A replacement thread list. **Installing JB Flow switches your sidebar to it**: bb uses the first installed thread-list plugin while **Settings → Appearance → Thread list** is on *Automatic*. Switch back there at any time. The list offers to create its lane sections the first time (or use **Settings → JB Flow → Triage lanes**).
 
 - **Groups**, top to bottom:
-  - **Needs me**: threads blocked on a prompt or permission, failed threads, and unread threads whose last message asks you something. Unread status updates stay in their section, in bold.
+  - **Needs me**: threads blocked on a prompt or permission, failed threads, and idle threads whose last message asks you something, read or not. Status follows the next action; bold is the only read signal, so unread status updates stay in their section, in bold.
   - **Stalled** (only when there are some): the agent said it would report back ("I'll report when it finishes", "I'm checking every 30 seconds") but the thread has been idle for over an hour with nothing watching it. **Nudge all** asks each one to check and continue.
   - **Lanes**: Priority, Active, Waiting for others, Pick up later, Low priority. Each is matched to one of your sections by name the first time, then remembered by id, so you can rename a lane's section (right-click → Rename…) and it keeps its number key and behaviour. Active is the unsectioned bucket and can't be renamed.
   - **Waiting for others** fills itself (marked *auto*): unfiled threads whose agent says it's waiting on someone else ("Alex is the only pending reviewer", "once he sends the invoices", "tell me when he replies"), or whose open PRs all wait on a reviewer. Threads you file there yourself go back to Active by themselves when a turn ends without waiting on anyone. Snoozed threads that were waiting on someone ("when it wakes, I'll check for Sam's reply") wake into Waiting for others instead of their old section.

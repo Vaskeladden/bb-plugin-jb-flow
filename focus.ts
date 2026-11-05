@@ -24,17 +24,15 @@ const STALE_MS = 15 * 60_000;
 type Thread = Awaited<ReturnType<BbPluginApi["sdk"]["threads"]["list"]>>[number];
 
 /**
- * Failed, blocked on a prompt, or finished unread with a last message that asks
- * you something (`awaiting`). Unread status updates don't count.
+ * Failed, blocked on a prompt, or idle with a last message that asks you
+ * something (`awaiting`). The next action decides, not read state: reading a
+ * question doesn't answer it, and bold already shows unread.
  */
 export function needsAttention(thread: Thread, awaiting: Record<string, number>): boolean {
   return (
     thread.status === "error" ||
     thread.hasPendingInteraction ||
-    (thread.status === "idle" &&
-      awaiting[thread.id] !== undefined &&
-      thread.latestAttentionAt !== null &&
-      (thread.lastReadAt === null || thread.latestAttentionAt > thread.lastReadAt))
+    (thread.status === "idle" && awaiting[thread.id] !== undefined)
   );
 }
 

@@ -32,11 +32,11 @@ describe("row status for a waiting agent", () => {
     expect(rowStatus(idle, false, undefined, [], null, undefined, NOW).label).toBe("Idle");
   });
 
-  it("a question for you shows a question mark, amber until read", () => {
+  it("a question for you shows the same amber question mark, read or not", () => {
     const asks = { kind: "asks" as const, since: NOW };
     const unread = { ...idle, isUnread: true } as unknown as PluginSidebarThread;
     expect(rowStatus(unread, false, undefined, [], null, asks, NOW)).toMatchObject({ glyph: "question", tone: "text-amber-500" });
-    expect(rowStatus(idle, false, undefined, [], null, asks, NOW)).toMatchObject({ glyph: "question", tone: "text-sky-500" });
+    expect(rowStatus(idle, false, undefined, [], null, asks, NOW)).toMatchObject({ glyph: "question", tone: "text-amber-500" });
     expect(rowStatus(idle, false, { kind: "ci", label: "Watching" }, [], null, asks, NOW).glyph).toBe("question");
   });
 });

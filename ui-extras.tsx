@@ -131,11 +131,10 @@ export function rowStatus(
   if (busy && run?.stuck) {
     return { glyph: "alert", tone: "text-amber-500", label: `Possibly stuck: no output for ${duration(run.silent)}` };
   }
-  // Its last turn asked you something: the same question mark as a pending prompt.
+  // Its last turn asked you something: the same question mark as a pending prompt,
+  // read or not (bold is the only read signal).
   if (!busy && waiting?.kind === "asks") {
-    return thread.isUnread
-      ? { glyph: "question", tone: "text-amber-500", label: "Asks you something" }
-      : { glyph: "question", tone: "text-sky-500", label: "Your move: the agent asked you something" };
+    return { glyph: "question", tone: "text-amber-500", label: "Asks you something" };
   }
   if (busy) return { glyph: "spinner", tone: "text-sky-500", label: run && run.elapsed >= 60_000 ? `Working for ${duration(run.elapsed)}` : "Working", spin: true };
   if (watching?.kind === "ci") return { glyph: "hourglass", tone: "text-sky-500", label: watching.label };
@@ -154,7 +153,6 @@ export function rowStatus(
     return { glyph: prGlyph(worst), tone: PR_TONE[worst.attention] ?? "text-muted-foreground", label };
   }
   // Fork: a finished chat looks like any idle one; its bold title already says unread.
-  if (thread.isUnread) return { glyph: "dot", tone: "text-muted-foreground/40", label: "Finished, unread" };
   return { glyph: "dot", tone: "text-muted-foreground/40", label: "Idle" };
 }
 

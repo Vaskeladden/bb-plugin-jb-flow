@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { studioStatus, studioThreads } from "./studio-model.ts";
+import { needsMe, studioStatus, studioThreads } from "./studio-model.ts";
 import type { PluginSidebarThread } from "@get-bb/plugin-sdk/app";
 import type { FlowState } from "./server";
 
@@ -65,22 +65,24 @@ test("input and error states take priority over running and ready PRs", () => {
   );
 });
 
-test("unread status alone does not mean a decision is waiting", () => {
+test("the next action decides attention, not read state", () => {
+  // Unread alone is only bold: no question, no attention.
   assert.equal(studioStatus(thread("a", { isUnread: true }), null), "idle");
-  assert.equal(
-    studioStatus(
-      thread("a", { isUnread: true }),
-      workflow({ awaiting: { a: 1 } }),
-    ),
-    "attention",
-  );
-  assert.equal(
-    studioStatus(
-      thread("a", { isUnread: false }),
-      workflow({ awaiting: { a: 1 } }),
-    ),
-    "idle",
-  );
+  // A question waits for you whether or not you have read it.
+  for (const isUnread of [true, false]) {
+    assert.equal(
+      studioStatus(thread("a", { isUnread }), workflow({ awaiting: { a: 1 } })),
+      "attention",
+    );
+  }
+});
+
+test("Needs me keeps read failures and read questions", () => {
+  assert.equal(needsMe(thread("a", { status: "error", isUnread: false }), {}), true);
+  assert.equal(needsMe(thread("a", { isUnread: false }), { a: 1 }), true);
+  assert.equal(needsMe(thread("a", { isUnread: true }), {}), false);
+  // A running thread's old question is not waiting on you yet.
+  assert.equal(needsMe(thread("a", { status: "active" }), { a: 1 }), false);
 });
 
 test("ready, watching, settled and ordinary idle work remain distinct", () => {
