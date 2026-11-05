@@ -382,6 +382,7 @@ A replacement thread list. **Installing JB Flow switches your sidebar to it**: b
   - If the release workflow fails, the message names the failed runs instead.
   - Configure it per project with `releaseWatch` (see [Configuration](#configuration)).
 - **CI and review watcher:** agents call the `wait_for_ci` tool (or `bb jb-flow wait-ci`) and end their turn, instead of polling `gh`.
+- **Run watcher:** agents call `wait_for_run` with a GitHub Actions run id or URL (a deploy, a release job) and end their turn. The thread shows as waiting, and gets one message when the run finishes, with the failed log on failure.
   - The plugin polls once every 2 minutes for all watches.
   - It messages the thread when checks finish (with the failed log), when reviews or comments arrive, or when the PR merges.
   - A thread that is still working gets nothing. Once it goes idle, the next check sends one message with the current state of all its PRs.

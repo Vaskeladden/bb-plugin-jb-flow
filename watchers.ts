@@ -6,6 +6,9 @@
 // - Release watcher: a thread that goes idle waiting for a release is woken
 //   with "released" once a release PR merges into the base branch and its
 //   workflow runs pass. Configured per project in local.config.json.
+// - Run watcher: agents call `wait_for_run` for one GitHub Actions run (a deploy,
+//   a release job) and end their turn; the CI check also polls these runs and
+//   messages the thread once the run finishes, with the failed log.
 // - CI watcher: agents call `wait_for_ci` instead of polling `gh` in loops; the
 //   plugin polls once for everyone and messages the thread when checks finish,
 //   reviews/comments arrive, or the PR merges. A thread that is still working
@@ -17,6 +20,7 @@ import { z } from "zod";
 import { parseLimitHit } from "./limits";
 import { GH_MISSING, ghError } from "./prs";
 import { RELEASE_WAIT } from "./release-wait";
+import { parseRunRef, runOutcome, type RunState } from "./runs";
 
 export const releaseWatchSchema = z.object({
   /** owner/name; defaults to the project's GitHub remote. */
@@ -36,6 +40,8 @@ type ThreadRef = Pick<Thread, "id" | "projectId" | "updatedAt">;
 const CONTINUE_DELAY_MS = 90_000;
 const RELEASE_BACKFILL_VERSION = 1;
 const CI_TIMEOUT_MS = 3 * 3_600_000;
+/** Deploys and nightly jobs run for hours; give up on a run after this. */
+const RUN_TIMEOUT_MS = 12 * 3_600_000;
 const NO_CHECKS_AFTER_MS = 10 * 60_000;
 const OK_CONCLUSIONS = new Set(["SUCCESS", "NEUTRAL", "SKIPPED"]);
 /** Thread states where CI news would only pile up in the queue. */
@@ -45,6 +51,7 @@ const BOT_LOGINS = new Set(["vercel", "github-actions", "dependabot", "linear", 
 const isBot = (login: string | undefined, body: string) =>
   login === undefined || login.endsWith("[bot]") || BOT_LOGINS.has(login) || /^\[vc\]:/.test(body);
 
+type RunWatch = { threadId: string; repo: string; runId: number; label: string; since: number };
 type AutoContinue = { resetsAt: number; queuedMessageId: string | null };
 export type ThreadPrRef = { repo: string; state: string; mergedAt?: number | null };
 type ReleaseWaiter = { threadId: string; projectName: string; since: number };
@@ -568,6 +575,64 @@ export function createWatchers(
     changed();
   }
 
+  // --- run watcher -------------------------------------------------------------
+
+  async function watchRun(threadId: string, run: string | number, repo?: string) {
+    const thread = await bb.sdk.threads.get({ threadId });
+    const ref = parseRunRef(repo && /^\d+$/.test(String(run).trim()) ? `${repo}#${run}` : run, (await projectFor(thread)).slug);
+    const current = JSON.parse(
+      await gh(["run", "view", String(ref.runId), "-R", ref.repo, "--json", "status,conclusion,name,displayTitle,url"]).catch(orEmpty),
+    ) as Partial<RunState>;
+    if (current.status === undefined) throw new Error(`Run ${ref.runId} in ${ref.repo} doesn't exist or isn't accessible.`);
+    if (current.status === "completed") {
+      throw new Error(`That run already finished: ${current.conclusion} (${current.url}). Nothing to wait for.`);
+    }
+    const watch: RunWatch = { threadId, repo: ref.repo, runId: ref.runId, label: current.name ?? "run", since: Date.now() };
+    await update<Record<string, RunWatch>>("runWatches", {}, (all) => {
+      all[`${threadId}:${ref.repo}/runs/${ref.runId}`] = watch;
+    });
+    changed();
+    return watch;
+  }
+
+  async function checkRunsNow() {
+    const watches = await get<Record<string, RunWatch>>("runWatches", {});
+    const removed = new Set<string>();
+    for (const [key, watch] of Object.entries(watches)) {
+      // News for a working agent would only pile up; it gets one message when idle.
+      const thread = await bb.sdk.threads.get({ threadId: watch.threadId }).catch(() => null);
+      if (thread !== null && BUSY_STATUSES.has(thread.status)) continue;
+      let text: string | null = null;
+      try {
+        const run = JSON.parse(
+          await gh(["run", "view", String(watch.runId), "-R", watch.repo, "--json", "status,conclusion,name,displayTitle,url,jobs"]),
+        ) as RunState;
+        const outcome = runOutcome(run, watch.repo);
+        if (outcome) {
+          text = outcome.text + (outcome.failed ? await failedLog(run.url, watch.repo) : "");
+        } else if (Date.now() - watch.since > RUN_TIMEOUT_MS) {
+          text = `${watch.label} in ${watch.repo.split("/")[1]} is still ${run.status} after 12 hours; stopped watching. ${run.url}`;
+        }
+      } catch (error) {
+        if (Date.now() - watch.since <= RUN_TIMEOUT_MS) {
+          bb.log.warn(`run ${key}: ${String(error)}`);
+          continue;
+        }
+        text = `Stopped watching run ${watch.runId} in ${watch.repo}: ${String(error)}`;
+      }
+      if (text === null) continue;
+      removed.add(key);
+      if (thread !== null && thread.archivedAt === null) {
+        await tell(watch.threadId, `[run watcher] ${text}`).catch((error) => bb.log.warn(`run notify: ${String(error)}`));
+      }
+    }
+    if (removed.size === 0) return;
+    await update<Record<string, RunWatch>>("runWatches", {}, (all) => {
+      for (const key of removed) delete all[key];
+    });
+    changed();
+  }
+
   // --- wiring ----------------------------------------------------------------
 
   bb.events.on("thread.idle", ({ thread, lastAssistantText }) => onIdle(thread, lastAssistantText));
@@ -581,6 +646,9 @@ export function createWatchers(
       for (const key of Object.keys(all)) if (all[key]!.threadId === thread.id) delete all[key];
     });
     await update<Record<string, CiWatch>>("ciWatches", {}, (all) => {
+      for (const key of Object.keys(all)) if (all[key]!.threadId === thread.id) delete all[key];
+    });
+    await update<Record<string, RunWatch>>("runWatches", {}, (all) => {
       for (const key of Object.keys(all)) if (all[key]!.threadId === thread.id) delete all[key];
     });
     changed();
@@ -634,6 +702,12 @@ export function createWatchers(
     if (ciRun !== null || Object.keys(await get<Record<string, CiWatch>>("ciWatches", {})).length === 0) return;
     await checkCi();
   });
+  let runRun: Promise<void> | null = null;
+  const checkRuns = () => (runRun ??= checkRunsNow().finally(() => (runRun = null)));
+  bb.background.schedule("run-watch", "*/2 * * * *", async () => {
+    if (runRun !== null || Object.keys(await get<Record<string, RunWatch>>("runWatches", {})).length === 0) return;
+    await checkRuns();
+  });
 
   async function status() {
     return {
@@ -641,15 +715,20 @@ export function createWatchers(
       releaseWaiters: await get<Record<string, ReleaseWaiter>>("releaseWaiters", {}),
       pendingReleases: await get<Record<string, Pending>>("pendingReleases", {}),
       ciWatches: await get<Record<string, CiWatch>>("ciWatches", {}),
+      runWatches: await get<Record<string, RunWatch>>("runWatches", {}),
     };
   }
 
   /** What will message this thread on its own: CI/review watches and release waits. */
   async function wakeupsFor(threadId: string): Promise<Array<{ kind: "ci" | "release"; key: string; label: string }>> {
     const watches = await get<Record<string, CiWatch>>("ciWatches", {});
+    const runs = await get<Record<string, RunWatch>>("runWatches", {});
     const waiters = await get<Record<string, ReleaseWaiter>>("releaseWaiters", {});
     const what = { checks: "checks", reviews: "reviews", both: "checks and reviews" } as const;
     return [
+      ...Object.entries(runs)
+        .filter(([, watch]) => watch.threadId === threadId)
+        .map(([key, watch]) => ({ kind: "ci" as const, key, label: `${watch.repo.split("/")[1]} · ${watch.label}` })),
       ...Object.entries(watches)
         .filter(([, watch]) => watch.threadId === threadId)
         .map(([key, watch]) => ({
@@ -669,6 +748,9 @@ export function createWatchers(
       await update<Record<string, CiWatch>>("ciWatches", {}, (all) => {
         if (all[key]?.threadId === threadId) delete all[key];
       });
+      await update<Record<string, RunWatch>>("runWatches", {}, (all) => {
+        if (all[key]?.threadId === threadId) delete all[key];
+      });
     } else {
       await update<Record<string, ReleaseWaiter>>("releaseWaiters", {}, (all) => {
         if (all[key]?.threadId === threadId) delete all[key];
@@ -677,5 +759,5 @@ export function createWatchers(
     changed();
   }
 
-  return { watchCi, registerReleaseWaiter, checkReleases, checkCi, status, autoContinueAt, cancelAutoContinue, wakeupsFor, cancelWakeup, RELEASE_WAIT };
+  return { watchCi, watchRun, checkRuns, registerReleaseWaiter, checkReleases, checkCi, status, autoContinueAt, cancelAutoContinue, wakeupsFor, cancelWakeup, RELEASE_WAIT };
 }

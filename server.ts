@@ -767,6 +767,9 @@ export default async function plugin(bb: BbPluginApi) {
     for (const [threadId, entry] of Object.entries(status.autoContinue)) {
       watching[threadId] = { kind: "continue", label: `Limit hit; auto-continues ${formatWhen(entry.resetsAt + 90_000)}` };
     }
+    for (const watch of Object.values(status.runWatches)) {
+      watching[watch.threadId] = { kind: "ci", label: `Watching ${watch.repo.split("/")[1]} · ${watch.label}` };
+    }
     for (const watch of Object.values(status.ciWatches)) {
       watching[watch.threadId] = { kind: "ci", label: `Watching ${watch.repo.split("/")[1]}#${watch.pr} (${watch.watchFor})` };
     }
@@ -1115,6 +1118,29 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
     },
   });
   bb.agents.registerTool({
+    name: "wait_for_run",
+    description:
+      "Wait for one GitHub Actions run (a deploy, release or nightly job) without polling. Registers a watch and returns immediately; when the run finishes, a message is sent to this thread once it is idle, with the failed jobs and log on failure. The thread shows as waiting meanwhile. End your turn after calling it.",
+    instructions:
+      "To wait for a GitHub Actions run that isn't a PR check (a deploy after merge, a release job), call wait_for_run with its id or URL and end your turn. Never poll it with `gh run watch`, sleep loops or background shell jobs: the thread then looks idle and every agent spends the shared GitHub rate limit.",
+    parameters: z.object({
+      run: z.string().describe("Run id, owner/name#id, or the run's URL"),
+      repo: z
+        .string()
+        .regex(/^[\w.-]+\/[\w.-]+$/)
+        .optional()
+        .describe("owner/name, when run is a bare id outside this thread's project repo"),
+    }),
+    async execute({ run, repo }, ctx) {
+      try {
+        const watch = await watchers.watchRun(ctx.threadId, run, repo);
+        return `Watching ${watch.repo} run ${watch.runId} (${watch.label}). End your turn now; a message will arrive when it finishes.`;
+      } catch (error) {
+        return { content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }], isError: true };
+      }
+    },
+  });
+  bb.agents.registerTool({
     name: "pr_status",
     description:
       "State of every PR this thread created (any repo, stack order): checks, review decision, conflicts, draft/merged, base/head. Served from the plugin's cache, refreshed every 3 minutes; pass refresh: true for a live read. Use this instead of gh pr view / gh pr checks to check PR state.",
@@ -1144,7 +1170,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
     agentSettings = next;
   });
   bb.agents.configure(() => ({
-    tools: ["snooze_thread", "wait_for_ci", "pr_status"],
+    tools: ["snooze_thread", "wait_for_ci", "wait_for_run", "pr_status"],
     skills: [],
     ...(agentSettings.autoStatus && agentSettings.threadMonitor
       ? { instructions: handBackInstructions(agentSettings.statusPrompt) }
@@ -1510,6 +1536,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
               ...Object.values(result.releaseWaiters).map((waiter) => `release     ${waiter.threadId}  (${waiter.projectName})`),
               ...Object.entries(result.pendingReleases).map(([key, release]) => `deploying   ${key}  ${release.title}`),
               ...Object.values(result.ciWatches).map((watch) => `ci          ${watch.threadId}  ${watch.repo}#${watch.pr} (${watch.watchFor})`),
+              ...Object.values(result.runWatches).map((watch) => `run         ${watch.threadId}  ${watch.repo} run ${watch.runId} (${watch.label})`),
             ];
             return { exitCode: 0, stdout: lines.length ? lines.join("\n") : "Nothing watched." };
           }
