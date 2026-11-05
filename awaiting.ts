@@ -1,43 +1,12 @@
-// Classifies an idle thread's final agent message: did it end by handing the
-// next move to the user (a question, options to pick, a decision board, "reply
-// go"), or is the work wrapped up? Read-but-unanswered asks otherwise look
-// like finished threads ("Done") even though the agent is waiting on you.
+// Classifies an idle thread's final agent message: did it end with an actual
+// question to the user (a sentence ending in "?", or inline answer controls),
+// or is the work wrapped up? Menus of next steps ("pick one", "Reply go for
+// all") are not questions; the owner only wants real questions in Needs me.
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
-import { parseDecisionOptions } from "./decisions.ts";
 import { laneSections } from "./lanes.ts";
 
-// Phrases that hand the next step to the user. Kept specific: status reports
-// mention "decision" or "blocked" without waiting on anyone.
-const ASKS = new RegExp(
-  [
-    String.raw`\?\s*$`,
-    String.raw`\b(reply|answer|write|type|send)\s+["“*]{0,2}(go|yes)\b`,
-    String.raw`\bsay\s+["“*]{1,2}(go|yes)\b`, // quoted: "if they say yes" is about someone else
-    String.raw`\b(want me to|should i|shall i|would you like|do you want|if you('d)? (want|like|prefer))\b`,
-    String.raw`\bif you (place|send|run|give|share|paste|confirm|approve|sign)\b`,
-    String.raw`\b(can|could|would) you\b`,
-    // Sign-offs ("Let me know if you need anything else", "Please note…") aren't asks.
-    String.raw`\blet me know\b(?!\s+if (you )?(need|have|want anything|there's anything|anything|something))`,
-    String.raw`\btell me\b`,
-    String.raw`\bplease\b(?!\s+(note|be aware|keep in mind|feel free|ignore))`,
-    String.raw`\byour (call|decision|input|answer|go-ahead)\b`,
-    String.raw`\bdecisions? (needed|for you|board)\b`,
-    // Addressed to you only: "Sam needs to approve it" waits on Sam.
-    String.raw`\byou (decide|choose|approve)\b|\bpick (one|an option|between|which|a|the)\b(?! up)`,
-    String.raw`\bpaste (it|the text|them|his|her|their)\b`,
-    String.raw`\b(waiting|blocked) (for|on|until) you\b`,
-    String.raw`\bonce you('ve| have)?\b`,
-    String.raw`\byou('ll)? need to\b`,
-    String.raw`\bneeds? (you|your)\b`,
-    String.raw`\b(you send it|unsent|in your drafts)\b`,
-    String.raw`\bnext step:?\**\s*(send|sign|install|reply|review|approve|run)\b`,
-  ].join("|"),
-  "i",
-);
+const AWAITING_VERSION = 14;
 
-const AWAITING_VERSION = 12;
-
-/** True when the tail of the message hands the next step to the user. */
 /** Curly apostrophes as straight ones, so "I’ll" matches like "I'll". */
 const straight = (text: string) => text.replace(/[’‘]/g, "'");
 
@@ -51,18 +20,26 @@ export function asksWithControls(text: string): boolean {
   return [...text.matchAll(UI_BLOCK)].some((block) => UI_ASK.test(block[0]));
 }
 
+// A question mark that ends a sentence, allowing closing quotes, emphasis or
+// brackets after it. "?" inside a URL or a word ("a?b") doesn't count.
+const QUESTION = /\?(?=["”»'*_)\]]*(?:\s|$))/;
+
+/** True when the end of the message asks the user an actual question. */
 export function asksUser(text: string): boolean {
   text = straight(text);
   if (asksWithControls(text)) return true;
-  // Conditional fallbacks ("If it still breaks, tell me what you did") aren't
-  // asks; conditions addressed to you ("If you want, I can…") still are.
-  const tail = text
-    .trim()
-    .slice(-900)
-    .replace(/(^|[.!?\n]\s*)if (?!you\b)(?:[^.!?\n]|[.!?](?=\S))*[.!?]?/gi, "$1");
-  // Trailing numbered options are a choice for you, whatever the wording.
-  // Any trailing numbered list counts here: a to-do list for you is an ask too.
-  return ASKS.test(tail) || parseDecisionOptions(text, { strict: false }).length > 0;
+  // Code and UI blocks, inline code and links can hold "?" that nobody asks:
+  // suggested follow-ups, query strings, quoted output.
+  const prose = text
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/`[^`\n]*`/g, " ")
+    .replace(/\bhttps?:\/\/\S+/g, " ")
+    // A bold "why" lead-in ("**Why does it fail?** The dispatcher…") explains;
+    // it doesn't ask. Other bold questions ("**Skal Sander betale?** Jeg
+    // anbefaler ja.") still ask, even with a recommendation after them.
+    .replace(/\*\*(?:why|hvorfor|how come)\b[^*\n]*\?\*\*/gi, " ")
+    .trim();
+  return QUESTION.test(prose.slice(-900));
 }
 
 // The agent said it would come back on its own ("I'll report when it finishes",

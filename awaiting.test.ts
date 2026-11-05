@@ -2,17 +2,24 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { asksUser, promisesFollowUp, waitsOnOthers } from "./awaiting.ts";
 
-test("hands-off messages count as your move", () => {
-  assert.ok(asksUser("I've reopened the decision board. Use \"Copy this instead\" and paste the text here."));
-  assert.ok(asksUser("Both are ready. Reply **go** for all, or **go 1,3**."));
+test("actual questions count as asks", () => {
   assert.ok(asksUser("Want me to open the PR?"));
-  assert.ok(asksUser("Complete any password prompts. Tell me whether the second command succeeds."));
-  assert.ok(asksUser("Please name the exact Slack channel for the alerts."));
-  assert.ok(asksUser("If you want, I can snooze this thread for 3 days."));
-  assert.ok(asksUser('Once Chris confirms, say "go" and I\'ll switch the setup.'));
-  assert.ok(asksUser("Draft created in the Amesto thread. It remains unsent."));
-  assert.ok(asksUser("Merging doesn't ship anything yet.\n\n1. Merge the three PRs now (recommended)\n2. Hold the merge\n3. You review first"));
-  assert.ok(asksUser("Two things:\n> 1. **Check** the starts after login.\n> 2. **Clean up:** remove this worktree.\n\n*2026-10-04*"));
+  assert.ok(asksUser("> **Decision needed:** Which follow-up should this thread start on?\n> 1. A\n> 2. B\n>\n> Reply with the number."));
+  assert.ok(asksUser("**Beslutning: hvem skal signere?**\n1. Sander\n2. Patrick"));
+  assert.ok(asksUser("Two options are ready. Shall I start the postcode PR?\n\n*2026-10-04*"));
+  assert.ok(asksUser("**Your call:** should I send it now?**"));
+  assert.ok(asksUser("**Skal Sander betale 10589 på nytt?** Jeg anbefaler ja. Da skriver jeg meldingen."));
+});
+
+test("menus, instructions and offers without a question are not asks", () => {
+  // The owner only wants real questions in Needs me (2026-11-05).
+  assert.ok(!asksUser("Both are ready. Reply **go** for all, or **go 1,3**."));
+  assert.ok(!asksUser("- **Your decision:** pick one, and I'll wait for your reply before starting it:\n  1. Move the invoice.\n  2. Publish the report."));
+  assert.ok(!asksUser("Merging doesn't ship anything yet.\n\n1. Merge the three PRs now (recommended)\n2. Hold the merge\n3. You review first"));
+  assert.ok(!asksUser("If you want, I can snooze this thread for 3 days."));
+  assert.ok(!asksUser("Please name the exact Slack channel for the alerts."));
+  assert.ok(!asksUser("> 1. Open the other thread and reply there\n>\n> Reply **go** if you want me to sum up its two questions here instead."));
+  assert.ok(!asksUser("Draft created in the Amesto thread. It remains unsent."));
 });
 
 test("wrapped-up messages don't", () => {
@@ -20,11 +27,14 @@ test("wrapped-up messages don't", () => {
   assert.ok(!asksUser("All 16 checks passed and the PR is merged."));
   assert.ok(!asksUser("I'm waiting on the fresh review I requested, and will pick it up when it arrives."));
   assert.ok(!asksUser("**Blocked:** Waiting for release (last: v6.100.0)."));
-  assert.ok(!asksUser("The open item is whether they need an AI block. If they say yes, that's new development."));
   assert.ok(!asksUser("The prod apply is running in the background. I'll report when it finishes."));
-  assert.ok(!asksUser("Shipped in v0.2.15. If switching shows on v0.2.15 still misbehaves, tell me what you did and what went wrong."));
-  assert.ok(!asksUser("Main's CI is blocked until #1113 merges.\n\nWhen #1113 is green, I'll:\n1. Merge it.\n2. Bring #1110 up to date and merge it.\n3. Run the first release train."));
-  assert.ok(asksUser("If you place one on dev with a throwaway password, I'll check the admin side."));
+});
+
+test("question marks in code, links and mid-word don't count", () => {
+  assert.ok(!asksUser("Opened the run: https://example.com/runs?id=4&tab=logs"));
+  assert.ok(!asksUser("**Why does Bob keep starting more?** The dispatcher only checks free slots. The fix is to pause new runs."));
+  assert.ok(!asksUser("The filter is `status=open?` in the old code. Fixed and merged."));
+  assert.ok(!asksUser("Output:\n```\nContinue? [y/N]\n```\nIt answered no on its own; done."));
 });
 
 test("follow-up promises are detected, asks win", () => {
@@ -58,17 +68,11 @@ test("waiting on someone else", () => {
 test("sign-offs, summaries and other people's steps aren't asks", () => {
   assert.ok(!asksUser("Done. PR #42 is merged and deployed. Let me know if you need anything else."));
   assert.ok(!asksUser("Fixed. Please note the migration takes ~3 minutes on prod."));
-  assert.ok(!asksUser("Shipped in v1.4.2. I couldn't decide between two names so I kept the old one."));
   assert.ok(!asksUser("Summary of changes:\n\n1. Renamed the config loader\n2. Added tests for it\n3. Updated the README"));
-  assert.ok(asksUser("Let me know which name you prefer."));
   assert.ok(waitsOnOthers("The PR is up. Sam needs to approve it before I can merge."));
   assert.ok(!waitsOnOthers("Pushed the fix. Waiting for the pipeline to go green."));
   assert.ok(!waitsOnOthers("Waiting for the tests to finish before merging."));
   assert.ok(promisesFollowUp("I’ll report back when the build finishes."));
-});
-
-test("'write go' is an ask", () => {
-  assert.ok(asksUser("> **Recommended:** remove the endpoint.\n>\n> Write **go** and I'll make that change."));
 });
 
 test("questions asked with inline UI controls count as asks", () => {
@@ -82,7 +86,7 @@ test("questions asked with inline UI controls count as asks", () => {
 
 test("inline UI without a question is not an ask", () => {
   const ui = (body: string) => `All green.\n\`\`\`ui\n${body}\n\`\`\`\nShipped.`;
-  assert.ok(!asksUser(ui('Card("Next", [FollowUps(["Ship it", "Write the docs"])])')));
+  assert.ok(!asksUser(ui('Card("Next", [FollowUps(["Ship it?", "Write the docs?"])])')));
   assert.ok(!asksUser(ui('Card("Links", [Button("Open the run", OpenUrl("https://example.com"))])')));
   assert.ok(!asksUser(ui('Card("Done", [Metric("Tests", "97 passed")])')));
 });
