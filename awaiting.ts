@@ -35,14 +35,25 @@ const ASKS = new RegExp(
   "i",
 );
 
-const AWAITING_VERSION = 11;
+const AWAITING_VERSION = 12;
 
 /** True when the tail of the message hands the next step to the user. */
 /** Curly apostrophes as straight ones, so "I’ll" matches like "I'll". */
 const straight = (text: string) => text.replace(/[’‘]/g, "'");
 
+// Inline UI (```ui) asks with controls: a Form, a Plan or Decision to approve,
+// or a Button without an action, whose label becomes your answer. Buttons that
+// open a link and FollowUps (suggested next questions) don't ask anything.
+const UI_BLOCK = /```ui\b[\s\S]*?```/g;
+const UI_ASK = /\b(?:Form|Plan|Decision)\(|\bButton\(\s*"[^"]*"\s*(?:,\s*variant:[^,)]*)?\)/;
+
+export function asksWithControls(text: string): boolean {
+  return [...text.matchAll(UI_BLOCK)].some((block) => UI_ASK.test(block[0]));
+}
+
 export function asksUser(text: string): boolean {
   text = straight(text);
+  if (asksWithControls(text)) return true;
   // Conditional fallbacks ("If it still breaks, tell me what you did") aren't
   // asks; conditions addressed to you ("If you want, I can…") still are.
   const tail = text

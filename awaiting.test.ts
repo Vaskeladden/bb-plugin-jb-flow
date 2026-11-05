@@ -70,3 +70,19 @@ test("sign-offs, summaries and other people's steps aren't asks", () => {
 test("'write go' is an ask", () => {
   assert.ok(asksUser("> **Recommended:** remove the endpoint.\n>\n> Write **go** and I'll make that change."));
 });
+
+test("questions asked with inline UI controls count as asks", () => {
+  const ui = (body: string, after = "") => `Here is where things stand.\n\`\`\`ui\n${body}\n\`\`\`\n${after}`;
+  assert.ok(asksUser(ui('Card("Add a watch?", [Button("Yes, build it"), Button("No, leave it")])', "Nothing else changed.")));
+  assert.ok(asksUser(ui('$x = ""\nCard("Before I plan", [Form([Radio($x, ["A", "B"], label: "Which?")])])')));
+  assert.ok(asksUser(ui('Card("Plan", [Plan([{title: "Do X"}])])')));
+  assert.ok(asksUser(ui('Card("Pick", [Decision([{name: "A", scores: [1]}], ["Speed"])])')));
+  assert.ok(asksUser(ui('Card("Delete?", [Button("Delete it", variant: "destructive")])')));
+});
+
+test("inline UI without a question is not an ask", () => {
+  const ui = (body: string) => `All green.\n\`\`\`ui\n${body}\n\`\`\`\nShipped.`;
+  assert.ok(!asksUser(ui('Card("Next", [FollowUps(["Ship it", "Write the docs"])])')));
+  assert.ok(!asksUser(ui('Card("Links", [Button("Open the run", OpenUrl("https://example.com"))])')));
+  assert.ok(!asksUser(ui('Card("Done", [Metric("Tests", "97 passed")])')));
+});

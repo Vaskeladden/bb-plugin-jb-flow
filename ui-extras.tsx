@@ -105,10 +105,10 @@ export function runInfo(running: FlowState["running"][string] | undefined, now: 
 
 // --- row status icon ---------------------------------------------------------------
 // One glyph that answers "what is this thread doing / waiting on?", replacing the
-// provider badge. Priority: needs you > error > running > watched > waiting > PR > finished.
+// provider badge. Priority: needs you > error > asks you > running > watched > waiting > PR > finished.
 
-/** The agent's last turn handed the next step to a later report, or to someone else. */
-export type RowWaiting = { kind: "promised" | "others"; since: number };
+/** The agent's last turn asked you, promised to report back, or handed the next step to someone else. */
+export type RowWaiting = { kind: "asks" | "promised" | "others"; since: number };
 /** A promise to report back counts as stalled after this long (matches awaiting.ts). */
 const STALLED_AFTER_MS = 60 * 60_000;
 
@@ -130,6 +130,12 @@ export function rowStatus(
   }
   if (busy && run?.stuck) {
     return { glyph: "alert", tone: "text-amber-500", label: `Possibly stuck: no output for ${duration(run.silent)}` };
+  }
+  // Its last turn asked you something: the same question mark as a pending prompt.
+  if (!busy && waiting?.kind === "asks") {
+    return thread.isUnread
+      ? { glyph: "question", tone: "text-amber-500", label: "Asks you something" }
+      : { glyph: "question", tone: "text-sky-500", label: "Your move: the agent asked you something" };
   }
   if (busy) return { glyph: "spinner", tone: "text-sky-500", label: run && run.elapsed >= 60_000 ? `Working for ${duration(run.elapsed)}` : "Working", spin: true };
   if (watching?.kind === "ci") return { glyph: "hourglass", tone: "text-sky-500", label: watching.label };

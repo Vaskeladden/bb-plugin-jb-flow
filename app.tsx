@@ -1164,8 +1164,10 @@ function useSectionDrag(onMove: (key: string, target: string, after: boolean) =>
   return { start, dragging };
 }
 
-/** What an idle thread's agent said it waits for, as the row shows it. */
+/** What an idle thread's agent said it waits for (you first), as the row shows it. */
 function rowWaiting(state: FlowState | null | undefined, threadId: string): RowWaiting | undefined {
+  const asks = state?.awaiting[threadId];
+  if (asks !== undefined) return { kind: "asks", since: asks };
   const others = state?.waitingOthers[threadId];
   if (others !== undefined) return { kind: "others", since: others };
   const promised = state?.promised[threadId];
