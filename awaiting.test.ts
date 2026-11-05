@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { asksUser, promisesFollowUp, waitsOnOthers } from "./awaiting.ts";
+import { asksUser, flagsFor, promisesFollowUp, waitsOnOthers } from "./awaiting.ts";
 
 test("actual questions count as asks", () => {
   assert.ok(asksUser("Want me to open the PR?"));
@@ -89,4 +89,25 @@ test("inline UI without a question is not an ask", () => {
   assert.ok(!asksUser(ui('Card("Next", [FollowUps(["Ship it?", "Write the docs?"])])')));
   assert.ok(!asksUser(ui('Card("Links", [Button("Open the run", OpenUrl("https://example.com"))])')));
   assert.ok(!asksUser(ui('Card("Done", [Metric("Tests", "97 passed")])')));
+});
+
+test("a labelled decision question counts even when evidence follows it", () => {
+  const evidence = "\n\n" + "The details: the queue was busy for four days and the memory peaked near the limit. ".repeat(20);
+  assert.ok(asksUser("Findings are in.\n\n**Your decision:** how should the bot get more capacity?\n1. Run it ourselves\n2. Pay for more" + evidence));
+  assert.ok(asksUser("Status.\n\n**Din beslutning:** hvem skal ta oppgaven?" + evidence));
+  assert.ok(!asksUser("Findings are in.\n\n**Your decision:** pick one, and I'll start on it." + evidence));
+});
+
+test("Norwegian promises to report back count", () => {
+  assert.ok(promisesFollowUp("Branchen lå bak main, så jeg har oppdatert den. Ny kjøring går nå, og jeg får beskjed når den er ferdig.\n\nNår den er grønn, merger jeg og følger med på deployen."));
+  assert.ok(promisesFollowUp("Deployen kjører. Jeg melder fra så snart den er ute."));
+  assert.ok(promisesFollowUp("Apply og deploy går nå. Jeg følger begge i bakgrunnen og sier fra når de er ferdige."));
+  assert.ok(!promisesFollowUp("Alt er merget og ute i produksjon."));
+});
+
+test("a declared state sets exactly one flag, and done clears them all", () => {
+  assert.deepEqual(flagsFor("needs_you"), { asks: true, promised: false, waiting: false });
+  assert.deepEqual(flagsFor("will_report_back"), { asks: false, promised: true, waiting: false });
+  assert.deepEqual(flagsFor("waiting_on_others"), { asks: false, promised: false, waiting: true });
+  assert.deepEqual(flagsFor("done"), { asks: false, promised: false, waiting: false });
 });

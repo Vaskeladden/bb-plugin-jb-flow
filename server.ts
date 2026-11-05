@@ -13,7 +13,7 @@ import { fileURLToPath } from "node:url";
 import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { createActivity } from "./activity";
-import { createAwaiting, waitsOnOthers } from "./awaiting";
+import { createAwaiting, DECLARED_STATES, waitsOnOthers } from "./awaiting";
 import { nextMove, parseDecisionOptions } from "./decisions";
 import { createLeftovers, leftoverSchema } from "./leftovers";
 import { createFocus, focusReportSchema, needsAttention } from "./focus";
@@ -350,6 +350,13 @@ export default async function plugin(bb: BbPluginApi) {
         "What Update status sends to the agent. Leave empty for a short built-in prompt. The monitor reads **Goal:**, **Done:**, **Next:**, **Blocked:** and a ### Progress block.",
       experimental_multiline: true,
       default: "",
+    },
+    declaredState: {
+      type: "boolean",
+      label: "Agents state what they wait for",
+      description:
+        "Ask agents to end every turn with the thread_state tool: needs you, will report back, waiting on others or done. The sidebar then shows Needs me and Waiting from the agent's own words, in any language. Off, or when a turn ends without it, the plugin reads the last message's wording instead.",
+      default: true,
     },
     autoStatus: {
       type: "boolean",
@@ -1118,6 +1125,22 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
     },
   });
   bb.agents.registerTool({
+    name: "thread_state",
+    description:
+      "Say what this thread waits for as your turn ends, so the user's sidebar shows it: needs_you (your reply asks the user a real question they must answer before you go on), will_report_back (you will continue by yourself, e.g. after a wait_for_ci/wait_for_run message), waiting_on_others (a person other than the user must act first), done (nothing pending). Call it as the last step of every turn, with one short note.",
+    instructions:
+      "End every turn by calling thread_state as your last tool call. Pick needs_you whenever your reply asks the user a question, even if it also reports progress or waits on something else; offering optional next steps without asking is not needs_you.",
+    parameters: z.object({
+      state: z.enum(DECLARED_STATES),
+      note: z.string().max(200).optional().describe("What you need or wait for, in a few words"),
+    }),
+    async execute({ state }, ctx) {
+      if (!(await settings.get()).declaredState) return "Thread state is switched off in JB Flow's settings; nothing recorded.";
+      await awaiting.declare(ctx.threadId, state);
+      return `Recorded: ${state}.`;
+    },
+  });
+  bb.agents.registerTool({
     name: "wait_for_run",
     description:
       "Wait for one GitHub Actions run (a deploy, release or nightly job) without polling. Registers a watch and returns immediately; when the run finishes, a message is sent to this thread once it is idle, with the failed jobs and log on failure. The thread shows as waiting meanwhile. End your turn after calling it.",
@@ -1170,7 +1193,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
     agentSettings = next;
   });
   bb.agents.configure(() => ({
-    tools: ["snooze_thread", "wait_for_ci", "wait_for_run", "pr_status"],
+    tools: ["snooze_thread", "wait_for_ci", "wait_for_run", "pr_status", ...(agentSettings.declaredState ? ["thread_state"] : [])],
     skills: [],
     ...(agentSettings.autoStatus && agentSettings.threadMonitor
       ? { instructions: handBackInstructions(agentSettings.statusPrompt) }

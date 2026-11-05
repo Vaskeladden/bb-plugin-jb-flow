@@ -5,7 +5,7 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { laneSections } from "./lanes.ts";
 
-const AWAITING_VERSION = 14;
+const AWAITING_VERSION = 15;
 
 /** Curly apostrophes as straight ones, so "I’ll" matches like "I'll". */
 const straight = (text: string) => text.replace(/[’‘]/g, "'");
@@ -19,6 +19,10 @@ const UI_ASK = /\b(?:Form|Plan|Decision)\(|\bButton\(\s*"[^"]*"\s*(?:,\s*variant
 export function asksWithControls(text: string): boolean {
   return [...text.matchAll(UI_BLOCK)].some((block) => UI_ASK.test(block[0]));
 }
+
+// A decision label, then a question on the same line.
+const DECISION_QUESTION =
+  /\*\*(?:your (?:decision|call)|decision needed|din (?:beslutning|avgjørelse)|beslutning(?: trengs)?|du må (?:velge|avgjøre))\b[^\n]*\?(?=["”»'*_)\]]*(?:\s|$))/i;
 
 // A question mark that ends a sentence, allowing closing quotes, emphasis or
 // brackets after it. "?" inside a URL or a word ("a?b") doesn't count.
@@ -39,7 +43,9 @@ export function asksUser(text: string): boolean {
     // anbefaler ja.") still ask, even with a recommendation after them.
     .replace(/\*\*(?:why|hvorfor|how come)\b[^*\n]*\?\*\*/gi, " ")
     .trim();
-  return QUESTION.test(prose.slice(-900));
+  // A labelled decision ("**Your decision:** which…?") asks wherever it sits:
+  // agents often put the question first and the evidence after it.
+  return QUESTION.test(prose.slice(-900)) || DECISION_QUESTION.test(prose);
 }
 
 // The agent said it would come back on its own ("I'll report when it finishes",
@@ -53,6 +59,11 @@ const PROMISES = new RegExp(
     String.raw`\bi'm (still )?waiting on (that|the|it)\b`,
     String.raw`\b(is|are) (running|still running) in the background\b`,
     String.raw`\bwill report when\b`,
+    // Norwegian: "jeg får beskjed når den er ferdig", "jeg følger med på…", "jeg melder fra når…".
+    String.raw`\bjeg (får beskjed|blir varslet|melder fra|sier fra|gir beskjed|rapporterer|følger opp)\b[^.\n]{0,80}\b(når|så snart|etter at|etter)\b`,
+    String.raw`\bjeg (følger med på|venter på|sjekker igjen)`,
+    String.raw`\b(sier|melder|gir) (fra|beskjed) (når|så snart)\b`,
+    String.raw`\bi bakgrunnen\b`,
   ].join("|"),
   "i",
 );
@@ -107,8 +118,19 @@ export function waitsOnOthers(text: string): boolean {
 /** A promise counts as stalled after the thread has been idle this long. */
 export const STALLED_AFTER_MS = 60 * 60_000;
 
+/** What the agent says the thread waits for when its turn ends (the `thread_state` tool). */
+export const DECLARED_STATES = ["needs_you", "will_report_back", "waiting_on_others", "done"] as const;
+export type DeclaredState = (typeof DECLARED_STATES)[number];
+
+/** The three flags a declared state sets; the agent's own words beat any pattern. */
+export function flagsFor(state: DeclaredState): { asks: boolean; promised: boolean; waiting: boolean } {
+  return { asks: state === "needs_you", promised: state === "will_report_back", waiting: state === "waiting_on_others" };
+}
+
 export function createAwaiting(bb: BbPluginApi, changed: () => void) {
   const kv = bb.storage.kv;
+  /** Declared during the current turn, read when it ends. Memory is enough: a turn lives in one process. */
+  const declared = new Map<string, DeclaredState>();
   // Threads go idle together; one queue for all three maps so a write never
   // replaces another thread's result with a stale copy.
   let lock: Promise<unknown> = Promise.resolve();
@@ -130,24 +152,41 @@ export function createAwaiting(bb: BbPluginApi, changed: () => void) {
   const setPromised = flag("promised");
   const getWaiting = async () => (await kv.get<Record<string, number>>("waitingOthers")) ?? {};
   const setWaiting = flag("waitingOthers");
-  const classify = async (threadId: string, text: string) => {
-    await set(threadId, asksUser(text) && !relaysOthers(text));
-    await setPromised(threadId, promisesFollowUp(text));
-    await setWaiting(threadId, waitsOnOthers(text));
+  const apply = async (threadId: string, flags: { asks: boolean; promised: boolean; waiting: boolean }) => {
+    await set(threadId, flags.asks);
+    await setPromised(threadId, flags.promised);
+    await setWaiting(threadId, flags.waiting);
+  };
+  // Fallback for turns that ended without a declaration (older sessions,
+  // providers without plugin tools): read the last message's wording.
+  const classify = (threadId: string, text: string) =>
+    apply(threadId, {
+      asks: asksUser(text) && !relaysOthers(text),
+      promised: promisesFollowUp(text),
+      waiting: waitsOnOthers(text),
+    });
+  /** The agent's own statement for this turn; applied at once and again when the turn ends. */
+  const declare = async (threadId: string, state: DeclaredState) => {
+    declared.set(threadId, state);
+    await apply(threadId, flagsFor(state));
   };
 
   bb.events.on("thread.idle", async ({ thread, lastAssistantText }) => {
     const text = lastAssistantText ?? "";
-    await classify(thread.id, text);
+    const state = declared.get(thread.id);
+    declared.delete(thread.id);
+    if (state) await apply(thread.id, flagsFor(state));
+    else await classify(thread.id, text);
     // A thread you filed under "Waiting for others" goes back to Active once a
     // turn ends without waiting on anyone (it asks you, or it's done).
-    if (waitsOnOthers(text)) return;
+    if (state ? state === "waiting_on_others" : waitsOnOthers(text)) return;
     const current = await bb.sdk.threads.get({ threadId: thread.id }).catch(() => null);
     if (current?.sectionId == null) return;
     const { waiting } = await laneSections(bb);
     if (waiting && current.sectionId === waiting) await bb.sdk.threads.update({ threadId: thread.id, sectionId: null });
   });
   const clear = async ({ thread }: { thread: { id: string } }) => {
+    declared.delete(thread.id);
     await set(thread.id, false);
     await setPromised(thread.id, false);
     await setWaiting(thread.id, false);
@@ -189,5 +228,5 @@ export function createAwaiting(bb: BbPluginApi, changed: () => void) {
     }
   }
 
-  return { all: get, promised: getPromised, waitingOthers: getWaiting, prune };
+  return { all: get, promised: getPromised, waitingOthers: getWaiting, prune, declare };
 }
