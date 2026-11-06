@@ -19,6 +19,18 @@ export function DecisionChips({
   ) : null;
 }
 
+/**
+ * What choosing a decision option sends: its trigger word when the option
+ * starts with one ("shipit · …" sends `shipit`, "polish · …" sends `polish pr`),
+ * so the agent runs that skill and the sidebar sees the chat is shipping.
+ * Any other option sends its number.
+ */
+export function answerFor(option: { n: number; text: string }): string {
+  const trigger = /^\s*\/?(?:pr-)?(ship\s*it|polish)\b/i.exec(option.text)?.[1]?.toLowerCase();
+  if (!trigger) return String(option.n);
+  return trigger === "polish" ? "polish pr" : "shipit";
+}
+
 /** "go" for all steps, or "go 1,3" for the ticked ones. */
 function goText(picked: readonly number[]): string {
   const steps = [...picked].sort((a, b) => a - b);
@@ -81,7 +93,8 @@ function Choices({ threadId, updatedAt }: { threadId: string; updatedAt: number 
   const composed = groups
     .map((group, index) => {
       if (group.mode === "go") return goText(pickedIn(index));
-      const answer = String(pickedIn(index)[0]);
+      const chosen = group.options.find((option) => option.n === pickedIn(index)[0]);
+      const answer = chosen ? answerFor(chosen) : String(pickedIn(index)[0]);
       if (groups.length === 1) return answer;
       decisionNumber += 1;
       return decisions > 1 ? `decision ${decisionNumber}: ${answer}` : `decision: ${answer}`;
@@ -140,7 +153,7 @@ function Choices({ threadId, updatedAt }: { threadId: string; updatedAt: number 
             {heading && <p className="jf-choices-question">{heading}</p>}
             <div className="jf-choices-list">
               {group.options.map((option) => {
-                const text = String(option.n);
+                const text = answerFor(option);
                 const selected = instant ? pending === text || sent === text : pickedIn(index).includes(option.n);
                 const label = `${go ? "Step" : instant ? "Reply" : "Option"} ${option.n}: ${option.text}${option.recommended ? " (recommended)" : ""}`;
                 return (

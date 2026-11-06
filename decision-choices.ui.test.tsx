@@ -223,3 +223,21 @@ it("keeps the box and its sent state when a thread update leaves the same questi
   expect(slot.getByText("Reply sent")).toBeTruthy();
   slot.lifecycle.unmount();
 });
+it("sends the trigger word for a shipit or polish option, and the number otherwise", async () => {
+  const { answerFor } = await import("./decision-choices");
+  expect(answerFor({ n: 1, text: "shipit · review loop, then merge" })).toBe("shipit");
+  expect(answerFor({ n: 1, text: "Ship it · merge now" })).toBe("shipit");
+  expect(answerFor({ n: 2, text: "/pr-polish · same loop, no merge" })).toBe("polish pr");
+  expect(answerFor({ n: 3, text: "Wait for Simen" })).toBe("3");
+  expect(answerFor({ n: 4, text: "Shipping later is fine" })).toBe("4");
+  const reply = vi.fn().mockResolvedValue({ ok: true });
+  const slot = renderSlot(
+    { component: DecisionChips },
+    { threadId: "t1", updatedAt: 1, idle: true },
+    { rpc: { decision_options: () => ({ groups: [{ mode: "choice" as const, question: "Ship it?", options: [{ n: 1, text: "shipit · review loop, then merge", recommended: true }, { n: 2, text: "Wait", recommended: false }] }] }), thread_reply: reply } },
+  );
+  fireEvent.click(await slot.findByRole("button", { name: /^Reply 1:/ }));
+  await waitFor(() => expect(reply).toHaveBeenCalledTimes(1));
+  expect(reply.mock.calls[0]).toEqual([{ threadId: "t1", text: "shipit" }]);
+  slot.lifecycle.unmount();
+});
