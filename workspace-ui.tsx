@@ -309,8 +309,11 @@ function WorkspaceNavigationInner(
           type="button"
           onClick={() => setMore(!more)}
           aria-expanded={more}
+          aria-label="More tools"
+          title="More tools"
         >
-          More tools
+          <Icon name={more ? "ChevronUp" : "ChevronDown"} className="jf-workspace-more-icon size-4" />
+          <span className="jf-workspace-more-label">More tools</span>
         </button>
         <button
           type="button"

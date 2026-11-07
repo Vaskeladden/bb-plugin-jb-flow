@@ -451,6 +451,39 @@
   .jf-workspace-tool > span:not(.jf-workspace-badge) {
     display: none;
   }
+  /* The tools, More tools and Customise share one row instead of two, and the
+     expanded list of other tools takes the full width below them. */
+  .jf-workspaces {
+    flex-flow: row wrap;
+    align-items: center;
+    padding-block: 4px;
+  }
+  .jf-workspaces > .jf-workspace-tools:first-of-type {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+  .jf-workspaces > .jf-workspace-tools + .jf-workspace-footer ~ .jf-workspace-tools,
+  .jf-workspaces > :is(.jf-workspace-error, [role="status"]) {
+    flex-basis: 100%;
+  }
+  .jf-workspace-footer {
+    flex: 0 0 auto;
+    gap: 2px;
+  }
+  .jf-workspace-footer button {
+    display: flex;
+    min-width: 44px;
+    align-items: center;
+    justify-content: center;
+  }
+  .jf-workspace-more-label {
+    display: none;
+  }
+}
+@media (min-width: 768px) {
+  .jf-workspace-more-icon {
+    display: none;
+  }
 }
 
 /* Reserve a separate row for workspace navigation. Framed desktop layouts

@@ -314,6 +314,9 @@
   outline-offset: 2px;
 }
 @media (pointer: coarse) {
+  /* Section headers were 20 px tall to tap; give the toggle a thumb-sized row. */
+  .jf-triage [data-jb-flow-section-header] { padding-block: 0; }
+  .jf-triage [data-jb-flow-section-header] > button { min-height: 40px; }
   .jf-triage .jf-filter-chip,
   .jf-triage .jf-thread-row,
   .jf-machine-filters summary,
