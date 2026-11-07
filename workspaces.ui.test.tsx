@@ -108,7 +108,7 @@ it("switches tabs, filters the actual navigation, keeps shared tools, and opens 
     app.appOverlays.find((overlay) => overlay.id === "workspace-topbar")!,
     {},
     {
-      settings: { workspaces: true },
+      settings: { workspaces: true, palette: true },
       rpc: { workspaces_get: () => state },
       sidebarThreads: {
         status: "ready",
@@ -124,6 +124,11 @@ it("switches tabs, filters the actual navigation, keeps shared tools, and opens 
     },
   );
   expect(document.querySelector(".jf-workspaces [role=tablist]")).toBeNull();
+  const opened = vi.fn();
+  window.addEventListener("jb-flow:palette", opened);
+  fireEvent.click(await topbar.findByRole("button", { name: "Search" }));
+  expect(opened).toHaveBeenCalledTimes(1);
+  window.removeEventListener("jb-flow:palette", opened);
   const acme = await topbar.findByRole("tab", { name: /Acme/ });
   expect(acme.textContent).toBe("Acme2");
   expect(acme.getAttribute("aria-description")).toBe(

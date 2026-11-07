@@ -37,6 +37,7 @@ import {
   DialogDescription,
 } from "./components/ui/dialog";
 import { WORKSPACE_BAR_EVENT } from "./workspace-topbar";
+import { PALETTE_EVENT } from "./palette";
 import "./workspaces.css";
 
 const isCatchUpPanel = (item: ExperimentalSidebarNavigationItem) =>
@@ -239,6 +240,7 @@ function WorkspaceTopBarInner() {
       ) : (
         <>
           <WorkspaceManager mode="new" />
+          <SearchButton />
           <WorkspaceManager mode="manage" />
         </>
       )}
@@ -252,6 +254,28 @@ function WorkspaceTopBarInner() {
         </button>
       )}
     </header>
+  );
+}
+
+/**
+ * Search, beside the workspace gear: the same search as ⌘K, for phones and
+ * anyone without a keyboard. With the palette off it opens bb's own search.
+ */
+function SearchButton() {
+  const paletteOn = useSettings().values?.palette === true;
+  const open = () => {
+    if (paletteOn) {
+      window.dispatchEvent(new CustomEvent(PALETTE_EVENT));
+      return;
+    }
+    // bb's thread search has no SDK call; its keyboard shortcut is the way in.
+    const mac = /Mac|iPhone|iPad/.test(navigator.platform);
+    document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "k", code: "KeyK", metaKey: mac, ctrlKey: !mac, bubbles: true, cancelable: true }));
+  };
+  return (
+    <button type="button" className="jf-workspace-manage" aria-label="Search" title="Search (⌘K)" onClick={open}>
+      <Icon name="Search" className="size-4" />
+    </button>
   );
 }
 
