@@ -26,7 +26,7 @@ export function DecisionChips({
  * Any other option sends its number.
  */
 export function answerFor(option: { n: number; text: string }): string {
-  const trigger = /^\s*\/?(?:pr-)?(ship\s*it|polish)\b/i.exec(option.text)?.[1]?.toLowerCase();
+  const trigger = /^\s*\/?(?:pr-)?(ship[\s-]*it|polish)\b/i.exec(option.text)?.[1]?.toLowerCase();
   if (!trigger) return String(option.n);
   return trigger === "polish" ? "polish pr" : "shipit";
 }
@@ -90,15 +90,21 @@ function Choices({ threadId, updatedAt }: { threadId: string; updatedAt: number 
   // Several decisions name theirs by position ("decision 2: 1"), so each answer stays tied to its question.
   const decisions = groups.filter((group) => group.mode === "choice").length;
   let decisionNumber = 0;
+  // A shipit answer leads the reply ("shipit (decision 2); decision 1: 1"), so
+  // the reply starts with the trigger word wherever it was picked. This plugin
+  // owns the trigger words; vaskeladden-bb's sidebar only reads that start.
   const composed = groups
     .map((group, index) => {
-      if (group.mode === "go") return goText(pickedIn(index));
+      if (group.mode === "go") return { text: goText(pickedIn(index)), ship: false };
       const chosen = group.options.find((option) => option.n === pickedIn(index)[0]);
       const answer = chosen ? answerFor(chosen) : String(pickedIn(index)[0]);
-      if (groups.length === 1) return answer;
+      if (groups.length === 1) return { text: answer, ship: false };
       decisionNumber += 1;
-      return decisions > 1 ? `decision ${decisionNumber}: ${answer}` : `decision: ${answer}`;
+      const name = decisions > 1 ? `decision ${decisionNumber}` : "decision";
+      return answer === "shipit" ? { text: `shipit (${name})`, ship: true } : { text: `${name}: ${answer}`, ship: false };
     })
+    .sort((a, b) => Number(b.ship) - Number(a.ship))
+    .map((part) => part.text)
     .join("; ");
   const reply = async (text: string) => {
     if (locked.current) return;

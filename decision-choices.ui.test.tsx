@@ -241,3 +241,30 @@ it("sends the trigger word for a shipit or polish option, and the number otherwi
   expect(reply.mock.calls[0]).toEqual([{ threadId: "t1", text: "shipit" }]);
   slot.lifecycle.unmount();
 });
+it("puts a shipit answer first when it answers one of several decisions", async () => {
+  const { answerFor } = await import("./decision-choices");
+  expect(answerFor({ n: 1, text: "Ship-it · merge now" })).toBe("shipit");
+  const reply = vi.fn().mockResolvedValue({ ok: true });
+  const slot = renderSlot(
+    { component: DecisionChips },
+    { threadId: "t1", updatedAt: 1, idle: true },
+    {
+      rpc: {
+        decision_options: () => ({
+          groups: [
+            { mode: "choice" as const, question: "Which rollout?", options: [{ n: 1, text: "10% today", recommended: true }, { n: 2, text: "Everyone", recommended: false }] },
+            { mode: "choice" as const, question: "Ship it?", options: [{ n: 1, text: "shipit · review loop, then merge", recommended: true }, { n: 2, text: "Wait", recommended: false }] },
+          ],
+        }),
+        thread_reply: reply,
+      },
+    },
+  );
+  const radios = await slot.findAllByRole("radio");
+  fireEvent.click(radios[0]!);
+  fireEvent.click(radios[2]!);
+  fireEvent.click(slot.getByRole("button", { name: /^Send/ }));
+  await waitFor(() => expect(reply).toHaveBeenCalledTimes(1));
+  expect(reply.mock.calls[0]).toEqual([{ threadId: "t1", text: "shipit (decision 2); decision 1: 1" }]);
+  slot.lifecycle.unmount();
+});
