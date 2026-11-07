@@ -264,6 +264,12 @@
   .jf-palette-row-hint {
     display: none;
   }
+  /* On a phone the palette is a bottom sheet that runs under the system
+     navigation bar; keep its last rows clear of it. */
+  .jf-palette-list {
+    padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+    scroll-padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  }
 }
 @media (prefers-reduced-motion: reduce) {
   .jf-palette-row {
