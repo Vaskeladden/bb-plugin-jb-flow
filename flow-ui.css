@@ -317,6 +317,12 @@
   /* Section headers were 20 px tall to tap; give the toggle a thumb-sized row. */
   .jf-triage [data-jb-flow-section-header] { padding-block: 0; }
   .jf-triage [data-jb-flow-section-header] > button { min-height: 40px; }
+  /* A chat with sub-chats: a clear 16 px arrow on a tinted pill, so it reads as
+     "open the sub-chats" and not as another section's arrow. */
+  .jf-triage .jf-thread-disclosure { color: var(--foreground); }
+  .jf-triage .jf-thread-disclosure svg { width: 16px; height: 16px; padding: 2px; box-sizing: content-box; border-radius: 6px; background: var(--muted); }
+  /* No grey flash over a row or header when a finger lands on it to scroll. */
+  .jf-triage a, .jf-triage button { -webkit-tap-highlight-color: transparent; }
   .jf-triage .jf-filter-chip,
   .jf-triage .jf-thread-row,
   .jf-machine-filters summary,

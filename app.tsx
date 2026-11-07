@@ -1053,7 +1053,9 @@ function useThreadDrag(onDrop: (threadId: string, sectionId: string | null) => v
   const [dragging, setDragging] = useState<DragState | null>(null);
   const start = useCallback(
     (thread: PluginSidebarThread, event: ReactPointerEvent<HTMLElement>) => {
-      if (event.button !== 0 || event.metaKey || event.ctrlKey) return;
+      // A finger on the list is scrolling: dragging is for mouse and pen. Phones
+      // reorder from the section menu instead.
+      if (event.button !== 0 || event.metaKey || event.ctrlKey || event.pointerType === "touch") return;
       const nav = event.currentTarget.closest("nav");
       const origin = { x: event.clientX, y: event.clientY };
       let active = false;
@@ -1075,6 +1077,7 @@ function useThreadDrag(onDrop: (threadId: string, sectionId: string | null) => v
       const finish = (drop: boolean) => {
         window.removeEventListener("pointermove", move);
         window.removeEventListener("pointerup", up);
+        window.removeEventListener("pointercancel", cancel);
         window.removeEventListener("keydown", escape);
         setDragging(null);
         if (!active) return;
@@ -1083,11 +1086,15 @@ function useThreadDrag(onDrop: (threadId: string, sectionId: string | null) => v
         if (drop && over !== null) onDrop(thread.id, over === ACTIVE_DROP ? null : over);
       };
       const up = () => finish(true);
+      // The browser took the gesture (a scroll, a system gesture): end without dropping,
+      // so a half-started drag can't finish on the next tap somewhere else.
+      const cancel = () => finish(false);
       const escape = (keyEvent: globalThis.KeyboardEvent) => {
         if (keyEvent.key === "Escape") finish(false);
       };
       window.addEventListener("pointermove", move);
       window.addEventListener("pointerup", up);
+      window.addEventListener("pointercancel", cancel);
       window.addEventListener("keydown", escape);
     },
     [onDrop],
@@ -1118,7 +1125,9 @@ function useSectionDrag(onMove: (key: string, target: string, after: boolean) =>
   const [dragging, setDragging] = useState<SectionDragState | null>(null);
   const start = useCallback(
     (key: string, event: ReactPointerEvent<HTMLElement>) => {
-      if (event.button !== 0 || event.metaKey || event.ctrlKey) return;
+      // A finger on the list is scrolling: dragging is for mouse and pen. Phones
+      // reorder from the section menu instead.
+      if (event.button !== 0 || event.metaKey || event.ctrlKey || event.pointerType === "touch") return;
       const origin = { x: event.clientX, y: event.clientY };
       let active = false;
       let over: string | null = null;
@@ -1143,6 +1152,7 @@ function useSectionDrag(onMove: (key: string, target: string, after: boolean) =>
       const finish = (drop: boolean) => {
         window.removeEventListener("pointermove", move);
         window.removeEventListener("pointerup", up);
+        window.removeEventListener("pointercancel", cancel);
         window.removeEventListener("keydown", escape);
         setDragging(null);
         if (!active) return;
@@ -1152,11 +1162,15 @@ function useSectionDrag(onMove: (key: string, target: string, after: boolean) =>
         if (drop && over !== null) onMove(key, over, after);
       };
       const up = () => finish(true);
+      // The browser took the gesture (a scroll, a system gesture): end without dropping,
+      // so a half-started drag can't finish on the next tap somewhere else.
+      const cancel = () => finish(false);
       const escape = (keyEvent: globalThis.KeyboardEvent) => {
         if (keyEvent.key === "Escape") finish(false);
       };
       window.addEventListener("pointermove", move);
       window.addEventListener("pointerup", up);
+      window.addEventListener("pointercancel", cancel);
       window.addEventListener("keydown", escape);
     },
     [onMove],
