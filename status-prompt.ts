@@ -1,3 +1,6 @@
+/** Longest prompt Update status or Donkey may send into a thread (the thread_reply contract). */
+export const THREAD_REPLY_MAX = 8000;
+
 // What "Update status" sends when the Status report prompt setting is empty.
 // The thread monitor parses these fields (see thread-status.ts).
 export const DEFAULT_STATUS_PROMPT = [

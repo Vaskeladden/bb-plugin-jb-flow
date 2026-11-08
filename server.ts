@@ -2,7 +2,7 @@ import { createWorkspaceStorage } from "./workspace-storage";
 import { workspaceSchema, workspaceStateSchema } from "./workspaces";
 import { createThreadStatus, threadStatusSchema } from "./thread-status";
 import { countSince } from "./catch-up-model";
-import { handBackInstructions } from "./status-prompt";
+import { handBackInstructions, THREAD_REPLY_MAX } from "./status-prompt";
 // jb-flow: snooze threads until a date, a daily stale-thread digest, and the
 // state behind the Triage thread list in app.tsx.
 //
@@ -232,7 +232,8 @@ export const rpcContract = defineRpcContract({
     }),
   },
   thread_reply: {
-    input: z.object({ threadId: z.string(), text: z.string().min(1).max(2000) }),
+    // Holds the Update status and Donkey prompts (default or the user's own); a test keeps the defaults under it.
+    input: z.object({ threadId: z.string(), text: z.string().min(1).max(THREAD_REPLY_MAX) }),
     output: z.object({ ok: z.boolean() }),
   },
   your_move: {

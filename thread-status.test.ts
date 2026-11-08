@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { expect, it } from "vitest";
-import { DEFAULT_STATUS_PROMPT, handBackInstructions } from "./status-prompt";
+import { DEFAULT_DONKEY_PROMPT, DEFAULT_STATUS_PROMPT, handBackInstructions, THREAD_REPLY_MAX } from "./status-prompt";
 import {
   createFakePluginHost,
   makeThreadResponse,
@@ -249,4 +249,10 @@ it("asks for the branch's health and simpler steps first, and still reads the re
   );
   expect(report?.goal).toBe("Every bug shows Bob's status");
   expect(report?.stepGroups?.[0]?.items).toHaveLength(2);
+});
+
+it("sends the built-in prompts within the thread_reply limit", () => {
+  // A longer default made every Update status press fail its input check.
+  expect(DEFAULT_STATUS_PROMPT.length).toBeLessThan(THREAD_REPLY_MAX);
+  expect(DEFAULT_DONKEY_PROMPT.length).toBeLessThan(THREAD_REPLY_MAX);
 });
