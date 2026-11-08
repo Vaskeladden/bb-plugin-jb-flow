@@ -5,6 +5,9 @@ export default defineConfig({
   resolve: { alias: { "@": fileURLToPath(new URL(".", import.meta.url)) } },
   test: {
     environment: "jsdom",
+    // A UI test renders the whole plugin app in jsdom; a file's first render alone
+    // can take 5 seconds, so vitest's default limit failed healthy tests.
+    testTimeout: 20_000,
     include: [
       "workspaces.test.ts",
       "workspaces.ui.test.tsx",
@@ -17,6 +20,7 @@ export default defineConfig({
       "palette.ui.test.tsx",
       "catch-up.ui.test.tsx",
       "row-status.ui.test.tsx",
+      "thread-tree.ui.test.tsx",
     ],
   },
 });
