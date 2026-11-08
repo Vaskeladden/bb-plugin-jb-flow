@@ -227,3 +227,26 @@ it("hands back with the status prompt the user set, or the built-in one", () => 
   // bb truncates thread instructions at 4096 characters.
   expect(handBackInstructions("").length).toBeLessThan(4096);
 });
+
+it("asks for the branch's health and simpler steps first, and still reads the report", () => {
+  expect(DEFAULT_STATUS_PROMPT).toContain("**Health:**");
+  expect(DEFAULT_STATUS_PROMPT).toContain("check the whole feature and simplify");
+  const report = parseStatusReport(
+    [
+      "**Goal:** Every bug shows Bob's status",
+      "",
+      "**Done:** Bob counts every post",
+      "",
+      "**Health:** Entropy −1: one source instead of two · Performance 0 · Vision: supports",
+      "",
+      "### Next steps",
+      "> [!TIP]",
+      "> **Path forward:** Simplify first",
+      "> 1. Remove the old fallback · Bob covers every post (simpler)",
+      "> 2. Add a filter · nice to have (adds)",
+    ].join("\n"),
+    1,
+  );
+  expect(report?.goal).toBe("Every bug shows Bob's status");
+  expect(report?.stepGroups?.[0]?.items).toHaveLength(2);
+});
