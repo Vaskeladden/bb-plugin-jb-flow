@@ -448,7 +448,7 @@
     gap: 3px;
     padding-inline: 4px;
   }
-  .jf-workspace-tool > span:not(.jf-workspace-badge) {
+  .jf-workspace-tool > span:not(.jf-workspace-badge):not([data-icon]) {
     display: none;
   }
   /* The tools, More tools and Customise share one row instead of two, and the
