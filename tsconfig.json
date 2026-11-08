@@ -36,6 +36,7 @@
     "when.ts",
     "server.ts",
     "app.tsx",
+    "thread-tree.ui.test.tsx",
     "studio.tsx",
     "shell-appearance.tsx",
     "live-activity.tsx",

@@ -300,6 +300,7 @@ A replacement thread list. **Installing JB Flow switches your sidebar to it**: b
   - Snoozed threads, collapsed.
 - **Machines**: once threads run on more than one machine, each machine gets a filter chip with its thread count (e.g. *Mac Studio 48*, *MacBook Air 2*); click one to see that machine's threads across all sections. Rows on a machine other than the one BB runs on carry a short tag (*Air*, *MBP*), and the hover preview always names the machine.
 - **Rows** show a project chip with a stable colour per project, tags, and an age fade for idle threads.
+- **Child threads** sit below their parent, with indentation, connecting lines and a disclosure arrow. A parent's badge counts its descendants and shows running, needs-attention and unread activity even while collapsed. The selected thread's branch opens automatically; other branches remember your choice in this browser. Children keep their own navigation, status and row actions, including when they use a different worktree or section. Filters include matching children and show their ancestors for context. Snoozed children stay in Snoozed; a child whose parent is unavailable appears as a top-level row.
 - **Keyboard**, on a focused row:
   - `1`–`5` move it to a lane
   - `s` snooze
@@ -307,6 +308,7 @@ A replacement thread list. **Installing JB Flow switches your sidebar to it**: b
   - `e` archive
   - `u` toggle unread
   - `j`/`k` move up and down
+  - `→` expand a branch or focus its first child; `←` collapse it or focus its parent
 - **Right-click menu:**
   - open / open in split view
   - pin, read/unread, rename

@@ -95,6 +95,8 @@ import { LiveActivityBanner } from "./live-activity";
 import { PALETTE_EVENT, Palette, usePaletteTrigger } from "./palette";
 import { CatchUpHomeEntry, CatchUpOverlay, CatchUpPage, useCatchUpBadge, useCatchUpTrigger } from "./catch-up";
 import { CATCH_UP_EVENT } from "./catch-up-model";
+import { buildThreadTree, filterThreadTree, flattenThreadTree, indexThreadTree } from "./thread-tree";
+import { ThreadBranch } from "./thread-branch";
 
 const DAY_MS = 86_400_000;
 
@@ -524,6 +526,7 @@ type Group = {
 
 function ThreadRow({
   thread,
+  childrenSummary,
   project,
   active,
   tags,
@@ -545,6 +548,7 @@ function ThreadRow({
   workspaceState, onWorkspace,
 }: {
   thread: PluginSidebarThread;
+  childrenSummary?: ReactNode;
   workspaceState: WorkspaceState;
   onWorkspace: (workspaceId: string | null, automatic: boolean) => void;
   project: PluginSidebarProject | undefined;
@@ -644,6 +648,7 @@ function ThreadRow({
           }}
           data-jb-flow-row={thread.id}
           data-sidebar-thread-shortcut-target=""
+          data-sidebar-thread-id={thread.id}
           aria-current={active ? "page" : undefined}
           aria-keyshortcuts={shortcut?.ariaKeyshortcuts}
           onClick={(event) => {
@@ -677,6 +682,7 @@ function ThreadRow({
           >
             <ThreadTitle threadId={thread.id} />
           </span>
+          {childrenSummary}
           {tags.slice(0, 2).map((tag) => (
             <span
               key={tag}
@@ -1250,7 +1256,13 @@ function useCollapsed(defaults: Record<string, boolean>) {
       localStorage.setItem(COLLAPSE_KEY, JSON.stringify(next));
       return next;
     });
-  return { isCollapsed, toggle };
+  const reveal = useCallback((ids: readonly string[]) => setStored((current) => {
+    if (ids.every((id) => current[id] === false)) return current;
+    const next = { ...current, ...Object.fromEntries(ids.map((id) => [id, false])) };
+    localStorage.setItem(COLLAPSE_KEY, JSON.stringify(next));
+    return next;
+  }), []);
+  return { isCollapsed, toggle, reveal };
 }
 
 function FilterChip({ hint, active, onClick, glyph, tone, label, count }: {
@@ -1390,7 +1402,7 @@ function TriageThreadList({
   const sectionMenu = (group: Group) => {
     const section = group.section;
     if (!section) return undefined;
-    const ids = group.threads.map((thread) => thread.id);
+    const ids = group.threads.flatMap((thread) => flattenThreadTree([treeNodes.get(thread.id)!]).map((member) => member.id));
     const key = sectionKey(section.id);
     const index = sectionKeys.indexOf(key);
     // The section's project, if set and still there: new threads start in it.
@@ -1477,18 +1489,18 @@ function TriageThreadList({
     );
   };
 
-  const { groups, smartCounts, machineCounts } = useMemo(() => {
+  const { groups, smartCounts, machineCounts, treeNodes } = useMemo(() => {
     const snoozedSectionId = state?.snoozedSectionId ?? null;
-    const laneSectionIds = new Set(lanes.map((lane) => lane.sectionId));
     const visible = threads
-      .filter((thread) => !thread.isHidden && !thread.isArchived && (thread.parentThreadId === null || !threads.some((parent) => parent.id === thread.parentThreadId)))
-      .filter((thread) => tagFilter === null || (tags[thread.id] ?? []).includes(tagFilter))
+      .filter((thread) => !thread.isHidden && !thread.isArchived)
       .sort((a, b) => b.createdAt - a.createdAt);
     // No Snoozed section until the first snooze: then nothing is snoozed (a null
     // sectionId is "unsectioned", not "in a missing section").
     const isSnoozed = (thread: PluginSidebarThread) => snoozedSectionId !== null && thread.sectionId === snoozedSectionId;
-    const snoozed = visible.filter(isSnoozed);
-    const awake = visible.filter((thread) => !isSnoozed(thread));
+    const matchesTag = (thread: PluginSidebarThread) => tagFilter === null || (tags[thread.id] ?? []).includes(tagFilter);
+    const snoozedTree = filterThreadTree(buildThreadTree(visible.filter(isSnoozed)), matchesTag);
+    const awakeTree = filterThreadTree(buildThreadTree(visible.filter((thread) => !isSnoozed(thread))), matchesTag);
+    const allAwake = flattenThreadTree(awakeTree).filter(matchesTag);
 
     const needs = (thread: PluginSidebarThread) => needsMe(thread, state?.awaiting);
     const busy = (thread: PluginSidebarThread) => thread.status === "active" || thread.status === "starting";
@@ -1522,26 +1534,41 @@ function TriageThreadList({
         allSettled(threadPrs(state?.threadPrs[thread.id], null)),
     };
     const smartCounts = Object.fromEntries(
-      SMART.map((entry) => [entry.id, awake.filter(sets[entry.id]).length]),
+      SMART.map((entry) => [entry.id, allAwake.filter(sets[entry.id]).length]),
     ) as Record<SmartId, number>;
+    // Archive cascades beyond the current filter/workspace. Check the complete
+    // family, including hidden and snoozed descendants, before offering Done.
+    const fullTree = indexThreadTree(buildThreadTree(allThreads.filter((thread) => !thread.isArchived)));
+    const doneTree = awakeTree.filter((node) => flattenThreadTree([fullTree.get(node.thread.id)!]).every(sets.done));
+    smartCounts.done = flattenThreadTree(doneTree).filter(matchesTag).length;
     const machineCounts = new Map<string, number>();
-    for (const thread of awake) {
+    for (const thread of allAwake) {
       const host = threadHost(thread, machines);
       if (host) machineCounts.set(host, (machineCounts.get(host) ?? 0) + 1);
     }
+
+    const selectedTree = smart === "done"
+      ? doneTree
+      : smart?.startsWith("machine:")
+        ? filterThreadTree(awakeTree, (thread) => threadHost(thread, machines) === smart.slice("machine:".length))
+        : smart !== null ? filterThreadTree(awakeTree, sets[smart as SmartId]) : awakeTree;
+    const treeNodes = indexThreadTree([...selectedTree, ...snoozedTree]);
+    const awake = selectedTree.map((node) => node.thread);
+    const snoozed = snoozedTree.map((node) => node.thread);
 
     // One machine's threads, across every section.
     if (smart?.startsWith("machine:")) {
       const hostId = smart.slice("machine:".length);
       const host = machines?.hosts.find((candidate) => candidate.id === hostId);
       return {
+        treeNodes,
         smartCounts,
         machineCounts,
         groups: [
           {
             id: smart,
             title: `On ${host ? machineLabel(host.name) : "machine"}`,
-            threads: awake.filter((thread) => threadHost(thread, machines) === hostId),
+            threads: awake,
             dynamic: { glyph: "terminal", tone: "text-slate-400" },
           },
         ] satisfies Group[],
@@ -1553,7 +1580,7 @@ function TriageThreadList({
     // still has one place to act on.
     if (smart !== null && smart !== "done") {
       const entry = SMART.find((candidate) => candidate.id === smart)!;
-      const members = awake.filter(sets[smart as SmartId]);
+      const members = awake;
       const inSection = (key: string, thread: PluginSidebarThread) => sectionKey(thread.sectionId) === key;
       const filtered: Group[] = [];
       for (const key of sectionKeys) {
@@ -1572,15 +1599,15 @@ function TriageThreadList({
       const placed = new Set(filtered.flatMap((group) => group.threads.map((thread) => thread.id)));
       const loose = members.filter((thread) => !placed.has(thread.id));
       if (loose.length > 0) filtered.unshift({ id: `smart:${smart}`, title: entry.label, threads: loose, dynamic: { glyph: entry.glyph, tone: entry.tone } });
-      return { smartCounts, machineCounts, groups: filtered };
+      return { smartCounts, machineCounts, groups: filtered, treeNodes };
     }
 
     // Done keeps the single computed list.
     if (smart !== null) {
       const entry = SMART.find((candidate) => candidate.id === smart)!;
-      const smartId = smart as SmartId;
-      const members = awake.filter(sets[smartId]);
+      const members = awake;
       return {
+        treeNodes,
         smartCounts,
         machineCounts,
         groups: [
@@ -1656,17 +1683,26 @@ function TriageThreadList({
       defaultCollapsed: true,
       dynamic: { glyph: "alarm", tone: "text-muted-foreground" },
     });
-    return { groups: result, smartCounts, machineCounts };
-  }, [threads, sections, lanes, otherSections, state, tags, tagFilter, smart, rpc, sectionKeys, activeThreadId, machines]);
+    return { groups: result, smartCounts, machineCounts, treeNodes };
+  }, [threads, allThreads, sections, lanes, otherSections, state, tags, tagFilter, smart, rpc, sectionKeys, activeThreadId, machines]);
 
   const defaults = useMemo(
     () =>
-      Object.fromEntries(
-        groups.map((group) => [group.id, group.defaultCollapsed ?? false]),
-      ),
-    [groups],
+      Object.fromEntries([
+        ...groups.map((group) => [group.id, group.defaultCollapsed ?? false]),
+        ...Array.from(treeNodes.values(), (node) => [`thread:${node.thread.id}`, true]),
+      ]),
+    [groups, treeNodes],
   );
-  const { isCollapsed, toggle } = useCollapsed(defaults);
+  const { isCollapsed, toggle, reveal } = useCollapsed(defaults);
+  const activePath = groups.flatMap((group) => group.threads.flatMap((thread) => {
+    const node = treeNodes.get(thread.id)!;
+    if (!flattenThreadTree([node]).some((item) => item.id === activeThreadId)) return [];
+    return [group.id, ...Array.from(treeNodes.values())
+      .filter((candidate) => flattenThreadTree([candidate]).some((item) => item.id === activeThreadId))
+      .map((candidate) => `thread:${candidate.thread.id}`)];
+  })).join("\n");
+  useEffect(() => { if (activePath) reveal(activePath.split("\n")); }, [activeThreadId, activePath, reveal]);
 
   if (status === "loading" || (!workspaceReady && selectedWorkspace !== null)) {
     return (
@@ -1753,7 +1789,8 @@ function TriageThreadList({
           group.id === "needs-me" || group.id.startsWith("smart:") || group.id.startsWith("section:") || group.firstUserGroup;
         if (group.threads.length === 0 && !keepEmpty) return null;
         const collapsed = group.id.startsWith("smart:") ? false : isCollapsed(group.id);
-        const limit = expanded[group.id] ? Infinity : (group.limit ?? Infinity);
+        const activeIndex = group.threads.findIndex((thread) => flattenThreadTree([treeNodes.get(thread.id)!]).some((item) => item.id === activeThreadId));
+        const limit = expanded[group.id] ? Infinity : Math.max(group.limit ?? Infinity, activeIndex + 1);
         return (
           <section
             key={group.id}
@@ -1805,34 +1842,47 @@ function TriageThreadList({
               </p>
             ) : (
               <>
-                {group.threads.slice(0, limit).map((thread) => (
-                  <ThreadRow
-                    key={thread.id}
-                    thread={thread}
-                    workspaceState={workspaceState}
-                    onWorkspace={(workspaceId, automatic) => void workspaceRpc.call("workspace_assign", { threadId: thread.id, workspaceId, automatic }).then(refreshWorkspaces).catch((cause) => toast.error(errorText(cause)))}
-                    project={projectById.get(thread.projectId)}
-                    active={thread.id === activeThreadId}
-                    tags={tags[thread.id] ?? []}
-                    snoozeUntil={state?.snoozes[thread.id]?.until}
-                    watching={state?.watching[thread.id]}
-                    waiting={rowWaiting(state, thread.id)}
-                    createdPrs={state?.threadPrs[thread.id]}
-                    running={state?.running[thread.id]}
-                    now={now}
-                    lanes={lanes}
-                    otherSections={otherSections}
-                    onNavigate={onNavigate}
-                    onSnooze={() => setSnoozeTarget(thread.id)}
-                    onUnsnooze={() =>
-                      void rpc.call("unsnooze", { threadId: thread.id })
-                    }
-                    onTag={() => setTagTarget(thread.id)}
-                    onRename={() => setRenameTarget(thread)}
-                    onNewSection={() => setSectionDialog({ mode: "create", name: "", threadId: thread.id })}
-                    machine={rowMachine(thread)}
-                  />
-                ))}
+                <ul className="jf-thread-tree" aria-label={group.title}>
+                  {group.threads.slice(0, limit).map((root) => (
+                    <ThreadBranch
+                      key={root.id}
+                      node={treeNodes.get(root.id)!}
+                      isCollapsed={isCollapsed}
+                      toggle={toggle}
+                      needsAttention={(thread) => needsMe(thread, state?.awaiting)}
+                      filtered={smart !== null || tagFilter !== null}
+                      renderRow={(thread, childrenSummary) => (
+                        <ThreadRow
+                          key={thread.id}
+                          thread={thread}
+                          childrenSummary={childrenSummary}
+                          workspaceState={workspaceState}
+                          onWorkspace={(workspaceId, automatic) => void workspaceRpc.call("workspace_assign", { threadId: thread.id, workspaceId, automatic }).then(refreshWorkspaces).catch((cause) => toast.error(errorText(cause)))}
+                          project={projectById.get(thread.projectId)}
+                          active={thread.id === activeThreadId}
+                          tags={tags[thread.id] ?? []}
+                          snoozeUntil={state?.snoozes[thread.id]?.until}
+                          watching={state?.watching[thread.id]}
+                          waiting={rowWaiting(state, thread.id)}
+                          createdPrs={state?.threadPrs[thread.id]}
+                          running={state?.running[thread.id]}
+                          now={now}
+                          lanes={lanes}
+                          otherSections={otherSections}
+                          onNavigate={onNavigate}
+                          onSnooze={() => setSnoozeTarget(thread.id)}
+                          onUnsnooze={() =>
+                            void rpc.call("unsnooze", { threadId: thread.id })
+                          }
+                          onTag={() => setTagTarget(thread.id)}
+                          onRename={() => setRenameTarget(thread)}
+                          onNewSection={() => setSectionDialog({ mode: "create", name: "", threadId: thread.id })}
+                          machine={rowMachine(thread)}
+                        />
+                      )}
+                    />
+                  ))}
+                </ul>
                 {group.threads.length > limit ? (
                   <button
                     type="button"

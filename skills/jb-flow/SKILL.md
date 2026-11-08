@@ -27,6 +27,20 @@ RPC equivalents are `workspaces_get(null)`, `workspace_save(workspace)`,
 `workspace_assign({ threadId, workspaceId, automatic })`. `automatic: true`
 removes an override; `workspaceId: null, automatic: false` forces No workspace.
 
+## Child threads in Triage
+
+JB Flow's Triage sidebar nests children below their parent, including children in
+other worktrees or sections. The arrow expands or collapses a branch; a badge
+counts descendants and shows running, needs-attention and unread activity. The
+active thread's ancestors open automatically. On a focused row, `→` opens the
+branch or focuses its first child; `←` closes it or focuses its parent.
+
+Smart, machine and tag filters include matching children and retain ancestors
+for context. Snoozed children stay in Snoozed. If a parent is hidden, archived or
+outside the selected workspace, visible children appear as top-level rows.
+Sidebar placement does not change stored parent links, sections or workspaces.
+Choose JB Flow's Triage provider under Settings → Appearance → Thread list.
+
 ## Palette (⌘K)
 
 A UI feature, with no CLI. While the **⌘K opens the JB Flow palette** setting is on (it
