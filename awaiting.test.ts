@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { asksUser, flagsFor, promisesFollowUp, reportedState, waitsOnOthers, wordingFlags } from "./awaiting.ts";
+import { asksUser, flagsFor, pendsDecision, promisesFollowUp, reportedState, waitsOnOthers, wordingFlags } from "./awaiting.ts";
 
 test("actual questions count as asks", () => {
   assert.ok(asksUser("Want me to open the PR?"));
@@ -146,4 +146,22 @@ test("the report's State line and a nothing-pending report decide the state", ()
   assert.equal(reportedState("**State:** Autopilot (CI running)"), "autopilot");
   assert.equal(reportedState("**State:** Running"), undefined);
   assert.equal(state("**Goal:** ship it\n**Done:** merged\n**State:** Ready\nAnything else?"), "ready");
+});
+
+// A decision left open is Needs me, even when the agent said Ready (Errors W2, 9 Nov 2026).
+test("an open decision is Needs me whatever state the agent declared", () => {
+  const w2 = "**Goal:** Fewer browser errors\n\n**Done:** The fix went live.\n\n**Next:** Look again after a full day.\n\n**State:** Ready\n\n### Next steps\n> [!TIP]\n> **Decision needed:** You have two open choices. Answer either one:\n>   1. Keep that page · simplest (recommended)\n>   2. Send the customer to the newest offer\n>\n> Reply with the numbers.";
+  assert.ok(pendsDecision(w2));
+  assert.equal(state(w2), "needs");
+  assert.deepEqual(flagsFor("done", w2), { asks: true, promised: false, waiting: false });
+  assert.deepEqual(flagsFor("autopilot", w2), { asks: true, promised: false, waiting: false });
+  assert.equal(state("- **Your decision:** pick one, and I'll wait for your reply before starting it:\n  1. Move the invoice.\n  2. Publish the report."), "needs");
+  assert.equal(state("Still open: the four partners wait for your decision on whether a factoring company's account may be confirmed."), "needs");
+  assert.equal(state("Next: review the compact mockup and decide whether to implement it."), "needs");
+});
+
+test("an optional offer in a report that says nothing is pending stays Ready", () => {
+  assert.ok(!pendsDecision("If you'd rather a claim cover only its issues, that's your call.\n\nNothing else is pending, so this thread can be archived."));
+  assert.ok(!pendsDecision("**Goal:** Ship\n\n**Done:** Built\n\n**Next:** Nothing pending.\n\n### Next steps\n> **Path forward:** Optional\n> 1. Tidy up · nice\n>\n> Reply **go** for all."));
+  assert.equal(state("Nothing needs approval. Waiting for your next message."), "ready");
 });

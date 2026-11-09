@@ -1,13 +1,15 @@
 // Classifies an idle thread's final agent message: did it end with an actual
 // question to the user (a sentence ending in "?", or inline answer controls),
-// or is the work wrapped up? Menus of next steps ("pick one", "Reply go for
-// all") are not questions; the owner only wants real questions in Needs me.
+// or is the work wrapped up? Any open decision counts, menus too ("pick one",
+// "Reply go for all"): a thread with a question pending is not done (2026-11-09,
+// replacing the 2026-11-05 rule that only "?" questions count).
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { lastReply, turnReply } from "./turn-reply.ts";
 import { laneSections } from "./lanes.ts";
 import { parseStatusReport, reportsNothingPending } from "./thread-status.ts";
+import { nextMove } from "./decisions.ts";
 
-const AWAITING_VERSION = 17;
+const AWAITING_VERSION = 18;
 
 /** Curly apostrophes as straight ones, so "I’ll" matches like "I'll". */
 const straight = (text: string) => text.replace(/[’‘]/g, "'");
@@ -132,6 +134,24 @@ export function waitsOnOthers(text: string): boolean {
 // stop. Nothing resolves it by itself, so it is Needs me, never Autopilot.
 const BLOCKER = /(?:^|\n)\s*(?:[-*]\s+)?\**BLOCKED\b|\bFOLLOW_UP_REQUIRED\b|\bSHIPIT-BLOCKED\b/;
 
+// A decision or go-list left open: "**Your decision:** pick one", "Reply with
+// the numbers", "wait for your decision on…", "decide whether to…".
+const DECISION_WORDS =
+  /\*\*(?:your (?:decision|choice|call)|decision needed|path forward)\b[^*\n]*:?\*\*|\breply (?:with the numbers?|\*{0,2}go\b)|\bpick one\b|\b(?:wait(?:s|ing)? for|needs?) your decision\b|\bdecide whether\b|\b(?:du må|du bør) (?:velge|avgjøre|bestemme)\b/i;
+const SAYS_DONE = /\bnothing (?:else )?(?:is )?pending\b|\bcan be archived\b|\bkan arkiveres\b/i;
+
+/** True when the message leaves a decision or go-list open for you: Needs me, whatever state was declared. */
+export function pendsDecision(text: string): boolean {
+  text = straight(text);
+  // A decision always waits for you; a go-list too, unless the report says
+  // nothing is pending (then it is an optional offer).
+  const groups = nextMove(text).groups;
+  if (groups.some((group) => group.mode === "choice")) return true;
+  if (groups.length > 0) return !reportsNothingPending(parseStatusReport(text, 0));
+  const tail = text.trim().slice(-900);
+  return DECISION_WORDS.test(tail) && !SAYS_DONE.test(tail.slice(-300));
+}
+
 /** True when the message ends on a blocker only you can clear. */
 export function blocksOnUser(text: string): boolean {
   return BLOCKER.test(straight(text).trim().slice(-1500));
@@ -148,6 +168,7 @@ export function reportedState(text: string): "needs_you" | "autopilot" | "ready"
 
 /** What a finished turn's last message says, when the agent declared nothing. */
 export function wordingFlags(text: string): { asks: boolean; promised: boolean; waiting: boolean } {
+  if (pendsDecision(text)) return { asks: true, promised: false, waiting: false };
   if (reportsNothingPending(parseStatusReport(text, Date.now()))) return flagsFor("ready");
   const stated = reportedState(text);
   if (stated) return flagsFor(stated, text);
@@ -185,6 +206,8 @@ export function declaredState(state: DeclaredState): "needs_you" | "autopilot" |
 export function flagsFor(state: DeclaredState, text = ""): { asks: boolean; promised: boolean; waiting: boolean } {
   // A blocker only you can clear is never Autopilot, whatever the agent said.
   if (declaredState(state) === "autopilot" && blocksOnUser(text)) return { asks: true, promised: false, waiting: false };
+  // An open decision is Needs me even when the agent said ready or autopilot.
+  if (text && pendsDecision(text)) return { asks: true, promised: false, waiting: false };
   const others = state === "waiting_on_others" || (state === "autopilot" && waitsOnOthers(text));
   return { asks: state === "needs_you", promised: declaredState(state) === "autopilot" && !others, waiting: others };
 }
