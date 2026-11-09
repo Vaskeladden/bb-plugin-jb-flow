@@ -5,13 +5,14 @@
 import type { PrStatus } from "./prs";
 import type { FlowState } from "./server";
 
-export type ThreadStateId = "running" | "needs" | "autopilot" | "ready" | "parked";
-export const THREAD_STATES: readonly ThreadStateId[] = ["running", "needs", "autopilot", "ready", "parked"];
+export type ThreadStateId = "running" | "needs" | "autopilot" | "ready" | "done" | "parked";
+export const THREAD_STATES: readonly ThreadStateId[] = ["running", "needs", "autopilot", "ready", "done", "parked"];
 export const THREAD_STATE_LABEL: Record<ThreadStateId, string> = {
   running: "Running",
   needs: "Needs me",
   autopilot: "Autopilot",
   ready: "Ready",
+  done: "Done",
   parked: "Parked",
 };
 
@@ -19,8 +20,10 @@ export const THREAD_STATE_LABEL: Record<ThreadStateId, string> = {
 export const THREAD_STATE_STYLE: Record<ThreadStateId, { glyph: "spinner" | "question" | "hourglass" | "check" | "pause"; tone: string }> = {
   running: { glyph: "spinner", tone: "text-sky-500" },
   needs: { glyph: "question", tone: "text-amber-500" },
-  autopilot: { glyph: "hourglass", tone: "text-violet-500" },
+  autopilot: { glyph: "hourglass", tone: "text-pink-500" },
   ready: { glyph: "check", tone: "text-green-500" },
+  // Purple: all work finished and landed, nothing left to commit or merge.
+  done: { glyph: "check", tone: "text-violet-500" },
   parked: { glyph: "pause", tone: "text-muted-foreground" },
 };
 
@@ -39,6 +42,8 @@ export type ThreadStateFacts = Pick<FlowState, "awaiting" | "watching"> & {
   promised?: Record<string, number>;
   waitingOthers?: Record<string, number>;
   parked?: Record<string, number>;
+  /** Threads whose git worktree has nothing uncommitted or unmerged. */
+  clean?: Record<string, number>;
   threadPrs: Record<string, readonly Pr[]>;
 };
 export type ThreadStateResult = {
@@ -80,6 +85,7 @@ export function idleFor(ms: number): string {
  *    a red PR nothing watches, or a promise to report back that went stale).
  * 3. Autopilot: it continues without you (a watch, a fresh promise, someone else's move).
  * 4. Ready: nothing left for the agent (a green PR to ship, or finished).
+ * 5. Done: Ready, and its git work is all committed and merged (no open PR).
  * Parked: you put it aside; nothing shows until it runs again or you unpark it.
  */
 export function threadState(
@@ -119,7 +125,13 @@ export function threadState(
 
   const green = open.find((pr) => pr.attention === "ready_to_merge");
   if (green) return { state: "ready", reason: `green PR ${prName(green)} ready to ship`, badges: ["green PR"] };
-  if (prsSettled(prs)) return { state: "ready", reason: "PRs merged or closed; nothing pending", badges: [] };
   if (open.length > 0) return { state: "ready", reason: `${prName(open[0]!)} open (${open[0]!.attention.replace(/_/g, " ")}); nothing pending`, badges: [] };
-  return { state: "ready", reason: "nothing pending", badges: [] };
+  const clean = facts?.clean?.[thread.id] !== undefined;
+  if (prsSettled(prs))
+    return clean
+      ? { state: "done", reason: "PRs merged or closed; nothing left to commit or merge", badges: [] }
+      : { state: "ready", reason: "PRs merged or closed; nothing pending", badges: [] };
+  return clean
+    ? { state: "done", reason: "nothing pending; nothing left to commit or merge", badges: [] }
+    : { state: "ready", reason: "nothing pending", badges: [] };
 }

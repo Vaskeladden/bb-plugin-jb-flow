@@ -1213,7 +1213,8 @@ const SMART: Array<{ id: SmartId; label: string; glyph: GlyphName; tone: string;
   { id: "needs", label: THREAD_STATE_LABEL.needs, glyph: THREAD_STATE_STYLE.needs.glyph, tone: THREAD_STATE_STYLE.needs.tone, hint: "Can't continue without you: a question or prompt, a failure, a red PR nothing watches, or a promise to report back that went quiet for an hour" },
   { id: "running", label: THREAD_STATE_LABEL.running, glyph: THREAD_STATE_STYLE.running.glyph, tone: THREAD_STATE_STYLE.running.tone, hint: "Agents working right now" },
   { id: "autopilot", label: THREAD_STATE_LABEL.autopilot, glyph: THREAD_STATE_STYLE.autopilot.glyph, tone: THREAD_STATE_STYLE.autopilot.tone, hint: "Continues without you: watching CI or a run, a usage-limit reset, will report back, or waiting on someone else" },
-  { id: "ready", label: THREAD_STATE_LABEL.ready, glyph: THREAD_STATE_STYLE.ready.glyph, tone: THREAD_STATE_STYLE.ready.tone, hint: "Nothing left for the agent: a green PR to ship, or finished (archive it)" },
+  { id: "ready", label: THREAD_STATE_LABEL.ready, glyph: THREAD_STATE_STYLE.ready.glyph, tone: THREAD_STATE_STYLE.ready.tone, hint: "Nothing left for the agent, but work to land: a green PR to ship, or changes not committed or merged yet" },
+  { id: "done", label: THREAD_STATE_LABEL.done, glyph: THREAD_STATE_STYLE.done.glyph, tone: THREAD_STATE_STYLE.done.tone, hint: "All work done: nothing pending, nothing left to commit or merge (archive it)" },
   { id: "parked", label: THREAD_STATE_LABEL.parked, glyph: THREAD_STATE_STYLE.parked.glyph, tone: THREAD_STATE_STYLE.parked.tone, hint: "Put aside by you with Park: in no other list until it runs again or you unpark it" },
 ];
 

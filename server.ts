@@ -15,6 +15,7 @@ import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { createActivity } from "./activity";
 import { THREAD_STATE_LABEL, THREAD_STATES, threadState, type ThreadStateId } from "./thread-states";
+import { createGitClean } from "./git-clean";
 import { createAwaiting, DECLARED_STATES, declaredState, waitsOnOthers } from "./awaiting";
 import { nextMove, parseDecisionOptions } from "./decisions";
 import { createLeftovers, leftoverSchema } from "./leftovers";
@@ -104,6 +105,8 @@ const stateSchema = z.object({
   waitingOthers: z.record(z.string(), z.number()),
   /** Threads you parked: shown as Parked, in no other state (thread id → since). */
   parked: z.record(z.string(), z.number()).optional(),
+  /** Idle threads with no uncommitted or unmerged git work (thread id → checked at). */
+  clean: z.record(z.string(), z.number()).optional(),
   /** Your order for non-lane sections (section ids); unlisted ones follow by creation. */
   sectionOrder: z.array(z.string()),
   /** Lane → section id, pinned so renaming a lane's section keeps its role. */
@@ -770,6 +773,7 @@ export default async function plugin(bb: BbPluginApi) {
   const activity = createActivity(bb, changed);
   const threadStatus = createThreadStatus(bb, changed);
   const awaiting = createAwaiting(bb, changed);
+  const gitClean = createGitClean(bb, changed);
 
   /** Watch every open PR the thread created; fall back to its branch PR. */
   async function watchThreadCi(
@@ -879,6 +883,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
       promised: await awaiting.promised(),
       waitingOthers: await awaiting.waitingOthers(),
       parked: await awaiting.parked(),
+      clean: await gitClean.all(),
       sectionOrder: (await bb.storage.kv.get<string[]>("sectionOrder")) ?? [],
       sectionProjects: (await bb.storage.kv.get<Record<string, string>>("sectionProjects")) ?? {},
       laneSections: await laneSections(bb),
@@ -1535,7 +1540,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
               awaiting.promised(),
               awaiting.waitingOthers(),
             ]);
-            const facts = { awaiting: awaitingAll, watching, promised, waitingOthers, parked: await awaiting.parked(), threadPrs: threadPrsAll };
+            const facts = { awaiting: awaitingAll, watching, promised, waitingOthers, parked: await awaiting.parked(), clean: await gitClean.all(), threadPrs: threadPrsAll };
             const now = Date.now();
             const rows = threads
               .filter((thread) => thread.archivedAt === null && thread.visibility === "visible")
