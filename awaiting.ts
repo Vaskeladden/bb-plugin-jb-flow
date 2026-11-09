@@ -7,7 +7,7 @@ import { lastReply, turnReply } from "./turn-reply.ts";
 import { laneSections } from "./lanes.ts";
 import { parseStatusReport, reportsNothingPending } from "./thread-status.ts";
 
-const AWAITING_VERSION = 16;
+const AWAITING_VERSION = 17;
 
 /** Curly apostrophes as straight ones, so "I’ll" matches like "I'll". */
 const straight = (text: string) => text.replace(/[’‘]/g, "'");
@@ -262,7 +262,7 @@ export function createAwaiting(bb: BbPluginApi, changed: () => void) {
         const threads = await bb.sdk.threads.list({ limit: 500 });
         for (const thread of threads) {
           if (signal.aborted) return;
-          if (thread.archivedAt !== null || thread.status !== "idle" || thread.parentThreadId !== null) continue;
+          if (thread.archivedAt !== null || thread.status !== "idle") continue;
           const output = await lastReply(bb, thread.id, signal);
           if (output) await classify(thread.id, output);
         }
