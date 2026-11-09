@@ -652,7 +652,7 @@ export function ActivityCard({
             onClick={requestStatus}
             title="Ask the agent for a fresh status report"
           >
-            {requesting ? "Requesting…" : outdated ? "Update status" : "Refresh"}
+            {requesting ? "Requesting…" : "Status"}
           </button>
         )}
         {canRequest && onRequestDonkey && (

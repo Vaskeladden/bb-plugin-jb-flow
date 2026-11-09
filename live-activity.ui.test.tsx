@@ -514,7 +514,7 @@ it("requests the actual Status prompt only on click and leaves the composer draf
   );
   await slot.findByText("Review the design");
   expect(request).not.toHaveBeenCalled();
-  fireEvent.click(slot.getByRole("button", { name: "Update status" }));
+  fireEvent.click(slot.getByRole("button", { name: "Status" }));
   await waitFor(() => expect(request).toHaveBeenCalledTimes(1));
   expect(request.mock.calls[0]).toEqual([
     expect.objectContaining({
@@ -686,7 +686,7 @@ it("calls out an outdated report with a prominent Update status, and stays quiet
     { ...base, now: 200_000, monitor: { ...savedMonitor, latestAt: 150_000 } },
   );
   expect(outdated.getByText("· out of date").getAttribute("title")).toBe("The agent replied after this report");
-  expect(outdated.getAllByRole("button", { name: "Update status" })).toHaveLength(1);
+  expect(outdated.getAllByRole("button", { name: "Status" })).toHaveLength(1);
   outdated.lifecycle.unmount();
 
   const current = renderSlot(
@@ -695,7 +695,7 @@ it("calls out an outdated report with a prominent Update status, and stays quiet
   );
   expect(current.queryByText("· out of date")).toBeNull();
   // Current: a quiet Refresh instead of the prominent Update status.
-  expect(current.getByRole("button", { name: "Refresh" })).toBeTruthy();
+  expect(current.getByRole("button", { name: "Status" })).toBeTruthy();
   current.lifecycle.unmount();
 });
 
