@@ -6,7 +6,7 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { laneSections } from "./lanes.ts";
 import { parseStatusReport, reportsNothingPending } from "./thread-status.ts";
 
-const AWAITING_VERSION = 15;
+const AWAITING_VERSION = 16;
 
 /** Curly apostrophes as straight ones, so "I’ll" matches like "I'll". */
 const straight = (text: string) => text.replace(/[’‘]/g, "'");
@@ -46,8 +46,15 @@ export function asksUser(text: string): boolean {
     .trim();
   // A labelled decision ("**Your decision:** which…?") asks wherever it sits:
   // agents often put the question first and the evidence after it.
-  return QUESTION.test(prose.slice(-900)) || DECISION_QUESTION.test(prose);
+  return QUESTION.test(prose.slice(-900)) || DECISION_QUESTION.test(prose) || WAITS_ON_YOU.test(prose.slice(-900));
 }
+
+// Asks without a question mark: "still waiting for your reply", a step list
+// whose next step is "**You:** approve the draft". A plain menu ("**Your
+// decision:** pick one, and I'll wait for your reply") is not one (2026-11-05).
+// "Waiting for your next message" is only a sign-off: nothing to decide.
+const WAITS_ON_YOU =
+  /\b(?:waits|waiting) (?:for|on) your (?:reply|answer|decision|call|input|approval|go)\b|\bnext decision:|^\s*(?:\d+\.|[-*])\s+\*\*You:\*\*/im;
 
 // The agent said it would come back on its own ("I'll report when it finishes",
 // "I'm checking every 30 seconds"). If the thread then stays idle, nothing is
@@ -60,6 +67,10 @@ const PROMISES = new RegExp(
     String.raw`\bi'm (still )?waiting on (that|the|it)\b`,
     String.raw`\b(is|are) (running|still running) in the background\b`,
     String.raw`\bwill report when\b`,
+    String.raw`\bi('ll| will) (check|look at|verify)\b[^.\n]{0,60}\bthen\b`,
+    String.raw`\b(a|the) background (job|watcher|task) will\b`,
+    String.raw`\b(daily|hourly|nightly|next) [^.\n]{0,20}\b(recheck|check|run) will (confirm|show|tell)\b`,
+    String.raw`\bi('ll| will) bring it to you\b`,
     // Norwegian: "jeg får beskjed når den er ferdig", "jeg følger med på…", "jeg melder fra når…".
     String.raw`\bjeg (får beskjed|blir varslet|melder fra|sier fra|gir beskjed|rapporterer|følger opp)\b[^.\n]{0,80}\b(når|så snart|etter at|etter)\b`,
     String.raw`\bjeg (følger med på|venter på|sjekker igjen)`,
@@ -80,7 +91,7 @@ export function promisesFollowUp(text: string): boolean {
 const PERSON = String.raw`(?:he|she|they|(?!(?:You|It|This|That|These|Those|We|There|Then|Once|When|CI|GitHub|Vercel|Linear|Sentry|Slack)\b)\p{Lu}[\p{L}'’-]+(?: \p{Lu}[\p{L}'’-]+)?)`;
 const WAITS = new RegExp(
   [
-    String.raw`\b([Ww]aiting|[Ww]ait) (for|on) (?![Yy]ou\b|CI\b|ci\b|(the|that) CI\b|[Cc]hecks?\b|(the|that|it|a|its|all) (CI|build|deploy|release|certificate|run|job|result|pipeline|tests?|workflows?|suite|checks?|migration|merge|GitHub Actions)\b|release\b|deploy\b|pipeline\b|tests?\b|workflows?\b|GitHub Actions\b|[Aa]ctions\b)\w`,
+    String.raw`\b([Ww]aiting|[Ww]ait) (for|on) (?![Yy]our?\b|CI\b|ci\b|(the|that) CI\b|[Cc]hecks?\b|(the|that|it|a|its|all) (CI|build|deploy|release|certificate|run|job|result|pipeline|tests?|workflows?|suite|checks?|migration|merge|GitHub Actions)\b|release\b|deploy\b|pipeline\b|tests?\b|workflows?\b|GitHub Actions\b|[Aa]ctions\b)\w`,
     String.raw`\b([Oo]nce|[Ww]hen|[Uu]ntil|[Aa]fter) ${PERSON} (replies|responds|answers|confirms|approves|reviews|sends|signs|gets back|has (replied|answered|confirmed|reviewed))`,
     String.raw`\b(depends on|is up to|pending on|[Bb]locked on) ${PERSON}\b`,
     String.raw`\b(only )?pending reviewers?\b|\bawaiting (review|a reply|reply|response|approval|their|his|her)\b`,
@@ -116,6 +127,37 @@ export function waitsOnOthers(text: string): boolean {
   return WAITS.test(text.trim().slice(-700)) && !asksUser(text);
 }
 
+// A marker that stops the work until you act: "**BLOCKED:** …", a shipit
+// stop. Nothing resolves it by itself, so it is Needs me, never Autopilot.
+const BLOCKER = /(?:^|\n)\s*(?:[-*]\s+)?\**BLOCKED\b|\bFOLLOW_UP_REQUIRED\b|\bSHIPIT-BLOCKED\b/;
+
+/** True when the message ends on a blocker only you can clear. */
+export function blocksOnUser(text: string): boolean {
+  return BLOCKER.test(straight(text).trim().slice(-1500));
+}
+
+/** The state a status report names on its "**State:**" line; Running names none (the turn has ended). */
+export function reportedState(text: string): "needs_you" | "autopilot" | "ready" | undefined {
+  const value = /^\s*(?:[-*]\s+)?\*\*State:\*\*\s*(.+)$/im.exec(straight(text))?.[1]?.toLowerCase() ?? "";
+  if (/\bneeds me\b/.test(value)) return "needs_you";
+  if (/\bautopilot\b/.test(value)) return "autopilot";
+  if (/\bready\b/.test(value)) return "ready";
+  return undefined;
+}
+
+/** What a finished turn's last message says, when the agent declared nothing. */
+export function wordingFlags(text: string): { asks: boolean; promised: boolean; waiting: boolean } {
+  if (reportsNothingPending(parseStatusReport(text, Date.now()))) return flagsFor("ready");
+  const stated = reportedState(text);
+  if (stated) return flagsFor(stated, text);
+  const asks = (asksUser(text) || blocksOnUser(text)) && !relaysOthers(text);
+  return {
+    asks,
+    promised: !asks && promisesFollowUp(text),
+    waiting: !asks && waitsOnOthers(text),
+  };
+}
+
 export { STALLED_AFTER_MS } from "./thread-states.ts";
 
 /**
@@ -140,6 +182,8 @@ export function declaredState(state: DeclaredState): "needs_you" | "autopilot" |
  * with nothing watching turns into Needs me after an hour.
  */
 export function flagsFor(state: DeclaredState, text = ""): { asks: boolean; promised: boolean; waiting: boolean } {
+  // A blocker only you can clear is never Autopilot, whatever the agent said.
+  if (declaredState(state) === "autopilot" && blocksOnUser(text)) return { asks: true, promised: false, waiting: false };
   const others = state === "waiting_on_others" || (state === "autopilot" && waitsOnOthers(text));
   return { asks: state === "needs_you", promised: declaredState(state) === "autopilot" && !others, waiting: others };
 }
@@ -176,12 +220,7 @@ export function createAwaiting(bb: BbPluginApi, changed: () => void) {
   };
   // Fallback for turns that ended without a declaration (older sessions,
   // providers without plugin tools): read the last message's wording.
-  const classify = (threadId: string, text: string) =>
-    apply(threadId, {
-      asks: asksUser(text) && !relaysOthers(text),
-      promised: promisesFollowUp(text),
-      waiting: waitsOnOthers(text),
-    });
+  const classify = (threadId: string, text: string) => apply(threadId, wordingFlags(text));
   /** The agent's own statement for this turn; applied at once and again when the turn ends. */
   const declare = async (threadId: string, state: DeclaredState, note = "") => {
     declared.set(threadId, { state, note });
@@ -199,7 +238,7 @@ export function createAwaiting(bb: BbPluginApi, changed: () => void) {
     else await classify(thread.id, text);
     // A thread you filed under "Waiting for others" goes back to Active once a
     // turn ends without waiting on anyone (it asks you, or it's ready).
-    if (flags ? flags.waiting : waitsOnOthers(text)) return;
+    if (flags ? flags.waiting : wordingFlags(text).waiting) return;
     const current = await bb.sdk.threads.get({ threadId: thread.id }).catch(() => null);
     if (current?.sectionId == null) return;
     const { waiting } = await laneSections(bb);

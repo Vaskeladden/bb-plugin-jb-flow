@@ -14,6 +14,14 @@ export const THREAD_STATE_LABEL: Record<ThreadStateId, string> = {
   ready: "Ready",
 };
 
+/** One look per state, shared by the filter chips and every thread row's icon. */
+export const THREAD_STATE_STYLE: Record<ThreadStateId, { glyph: "spinner" | "question" | "hourglass" | "check"; tone: string }> = {
+  running: { glyph: "spinner", tone: "text-sky-500" },
+  needs: { glyph: "question", tone: "text-amber-500" },
+  autopilot: { glyph: "hourglass", tone: "text-violet-500" },
+  ready: { glyph: "check", tone: "text-green-500" },
+};
+
 /** A promise to report back counts as stalled after the thread has been idle this long. */
 export const STALLED_AFTER_MS = 60 * 60_000;
 

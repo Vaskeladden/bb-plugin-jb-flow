@@ -62,7 +62,7 @@ import {
 import type { RunInfo, ThreadPr } from "./ui-extras";
 import { SNOOZE_PRESETS, formatWhen, parseWhen } from "./when";
 import { LANE_NAMES, matchLanes, resolveLanes, sectionNames, type Lane, type LaneId, type LaneSections } from "./lanes";
-import { THREAD_STATE_LABEL, threadState, type ThreadStateId, type ThreadStateResult } from "./thread-states";
+import { THREAD_STATE_LABEL, THREAD_STATE_STYLE, threadState, type ThreadStateId, type ThreadStateResult } from "./thread-states";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -591,7 +591,16 @@ function ThreadRow({
   const { pullRequest } = useSidebarThreadPullRequest(thread.id);
   const prs = threadPrs(createdPrs, pullRequest);
   const run = busy ? runInfo(running, now) : null;
-  const status = rowStatus(thread, busy, watching, prs, run, waiting, now);
+  // The row's icon wears its state's colour, the same as the filter chip; the glyph and
+  // label keep the detail (alert on a failure, rocket on a release watch).
+  const detail = rowStatus(thread, busy, watching, prs, run, waiting, now);
+  const status = stateInfo
+    ? {
+        ...detail,
+        tone: THREAD_STATE_STYLE[stateInfo.state].tone,
+        ...(detail.glyph === "dot" ? { glyph: THREAD_STATE_STYLE[stateInfo.state].glyph } : {}),
+      }
+    : detail;
   const worst = worstPr(prs);
   const openPrs = prs.filter((pr) => pr.state === "open" || pr.state === "draft");
   const rpc = useRpc<typeof rpcContract>();
@@ -1200,10 +1209,10 @@ type SmartId = ThreadStateId;
 /** A smart filter, or one machine's threads (`machine:<hostId>`). */
 type Filter = SmartId | `machine:${string}`;
 const SMART: Array<{ id: SmartId; label: string; glyph: GlyphName; tone: string; hint: string }> = [
-  { id: "needs", label: THREAD_STATE_LABEL.needs, glyph: "question", tone: "text-amber-500", hint: "Can't continue without you: a question or prompt, a failure, a red PR nothing watches, or a promise to report back that went quiet for an hour" },
-  { id: "running", label: THREAD_STATE_LABEL.running, glyph: "spinner", tone: "text-sky-500", hint: "Agents working right now" },
-  { id: "autopilot", label: THREAD_STATE_LABEL.autopilot, glyph: "hourglass", tone: "text-violet-500", hint: "Continues without you: watching CI or a run, a usage-limit reset, will report back, or waiting on someone else" },
-  { id: "ready", label: THREAD_STATE_LABEL.ready, glyph: "check", tone: "text-green-500", hint: "Nothing left for the agent: a green PR to ship, or finished (archive it)" },
+  { id: "needs", label: THREAD_STATE_LABEL.needs, glyph: THREAD_STATE_STYLE.needs.glyph, tone: THREAD_STATE_STYLE.needs.tone, hint: "Can't continue without you: a question or prompt, a failure, a red PR nothing watches, or a promise to report back that went quiet for an hour" },
+  { id: "running", label: THREAD_STATE_LABEL.running, glyph: THREAD_STATE_STYLE.running.glyph, tone: THREAD_STATE_STYLE.running.tone, hint: "Agents working right now" },
+  { id: "autopilot", label: THREAD_STATE_LABEL.autopilot, glyph: THREAD_STATE_STYLE.autopilot.glyph, tone: THREAD_STATE_STYLE.autopilot.tone, hint: "Continues without you: watching CI or a run, a usage-limit reset, will report back, or waiting on someone else" },
+  { id: "ready", label: THREAD_STATE_LABEL.ready, glyph: THREAD_STATE_STYLE.ready.glyph, tone: THREAD_STATE_STYLE.ready.tone, hint: "Nothing left for the agent: a green PR to ship, or finished (archive it)" },
 ];
 
 /** "Alex’s Mac Studio" → "Mac Studio". */

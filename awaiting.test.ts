@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { asksUser, flagsFor, promisesFollowUp, waitsOnOthers } from "./awaiting.ts";
+import { asksUser, flagsFor, promisesFollowUp, reportedState, waitsOnOthers, wordingFlags } from "./awaiting.ts";
 
 test("actual questions count as asks", () => {
   assert.ok(asksUser("Want me to open the PR?"));
@@ -110,4 +110,40 @@ test("a declared state sets exactly one flag, and done clears them all", () => {
   assert.deepEqual(flagsFor("will_report_back"), { asks: false, promised: true, waiting: false });
   assert.deepEqual(flagsFor("waiting_on_others"), { asks: false, promised: false, waiting: true });
   assert.deepEqual(flagsFor("done"), { asks: false, promised: false, waiting: false });
+});
+
+// Real last messages from threads that were wrongly shown as Autopilot (9 Nov 2026).
+const state = (text: string) => {
+  const flags = wordingFlags(text);
+  return flags.asks ? "needs" : flags.promised || flags.waiting ? "autopilot" : "ready";
+};
+
+test("a blocker only you can clear is Needs me, never Autopilot", () => {
+  assert.equal(state("**BLOCKED:** B448 mangler tilgang til tilbudslenken i prod. Jeg kan ikke gå videre før du gir tilgang."), "needs");
+  assert.equal(state("SHIPIT-BLOCKED: the premerge gate needs your approval."), "needs");
+  assert.deepEqual(flagsFor("autopilot", "FOLLOW_UP_REQUIRED: Bob needs a maintenance grant."), { asks: true, promised: false, waiting: false });
+});
+
+test("asks without a question mark are Needs me", () => {
+  assert.equal(state("- **#6335**, the Portal demo security fix, waits for your answer: ship it now or switch Comms."), "needs");
+  assert.equal(state("No new action. The follow-up options above are still waiting for your reply."), "needs");
+  assert.equal(state("**Who owns each step:**\n1. **You:** approve the draft.\n2. **Me:** send it.\n3. **Jan:** send the credit note."), "needs");
+});
+
+test("a sign-off that waits for your next message is Ready, not waiting on someone else", () => {
+  assert.equal(waitsOnOthers("Nothing needs approval. Waiting for your next message."), false);
+  assert.equal(state("Nothing needs approval. Waiting for your next message."), "ready");
+  assert.equal(state("I'll wait for your next message."), "ready");
+});
+
+test("work that carries on by itself is Autopilot", () => {
+  assert.equal(state("A background job will wait for the merge, then follow the Terraform apply. I'll check the file and the next morning line then."), "autopilot");
+  assert.equal(state("**What happens next.** The planning thread's daily 10:00 recheck will confirm the fixes from PostHog events after the deploy."), "autopilot");
+});
+
+test("the report's State line and a nothing-pending report decide the state", () => {
+  assert.equal(reportedState("**Goal:** x\n**State:** Needs me — pick a plan"), "needs_you");
+  assert.equal(reportedState("**State:** Autopilot (CI running)"), "autopilot");
+  assert.equal(reportedState("**State:** Running"), undefined);
+  assert.equal(state("**Goal:** ship it\n**Done:** merged\n**State:** Ready\nAnything else?"), "ready");
 });
