@@ -95,6 +95,7 @@ import { LiveActivityBanner } from "./live-activity";
 import { PALETTE_EVENT, Palette, usePaletteTrigger } from "./palette";
 import { CatchUpHomeEntry, CatchUpOverlay, CatchUpPage, useCatchUpBadge, useCatchUpTrigger } from "./catch-up";
 import { CATCH_UP_EVENT } from "./catch-up-model";
+import { dropKey, mergeOrder, needsFreeze, stepKey } from "./section-order";
 import { buildThreadTree, filterThreadTree, flattenThreadTree, indexThreadTree } from "./thread-tree";
 import { ThreadBranch } from "./thread-branch";
 
@@ -1115,16 +1116,6 @@ const SECTION_ATTR = "data-jb-section-key";
 const sectionKey = (id: string | null) => id ?? ACTIVE_DROP;
 
 /** Saved order first; sections it doesn't know yet go right after their default predecessor. */
-function mergeOrder(saved: readonly string[], defaults: readonly string[]): string[] {
-  const result = saved.filter((key, index) => defaults.includes(key) && saved.indexOf(key) === index);
-  defaults.forEach((key, index) => {
-    if (result.includes(key)) return;
-    const previous = defaults.slice(0, index).reverse().find((candidate) => result.includes(candidate));
-    result.splice(previous === undefined ? 0 : result.indexOf(previous) + 1, 0, key);
-  });
-  return result;
-}
-
 type SectionDragState = { key: string; over: string | null; after: boolean };
 
 function useSectionDrag(onMove: (key: string, target: string, after: boolean) => void) {
@@ -1366,36 +1357,37 @@ function TriageThreadList({
   const drag = useThreadDrag(onDrop);
 
   // Lanes and your own sections share one order, so any section can sit anywhere.
-  const sectionKeys = useMemo(
-    () =>
-      mergeOrder(workspace?.sectionOrder.length ? workspace.sectionOrder : state?.sectionOrder ?? [], [
-        ...lanes.map((lane) => sectionKey(lane.sectionId)),
-        ...otherSections.map((section) => section.id),
-      ]),
-    [lanes, otherSections, state?.sectionOrder, workspace?.sectionOrder],
+  // It is one order for every view, changed only by the user: a view shows a
+  // subset, and every move works on the full order, so a hidden section keeps
+  // its place and switching workspace never reshuffles.
+  const sectionOrder = state?.sectionOrder;
+  const fullOrder = useMemo(() => {
+    const laneIds = new Set(lanes.map((lane) => lane.sectionId));
+    return mergeOrder(sectionOrder ?? [], [
+      ...lanes.map((lane) => sectionKey(lane.sectionId)),
+      ...sections.filter((section) => !laneIds.has(section.id) && section.id !== state?.snoozedSectionId).map((section) => section.id),
+    ]);
+  }, [lanes, sections, sectionOrder, state?.snoozedSectionId]);
+  const visibleKeys = useMemo(
+    () => new Set([...lanes.map((lane) => sectionKey(lane.sectionId)), ...otherSections.map((section) => section.id)]),
+    [lanes, otherSections],
   );
+  const sectionKeys = useMemo(() => fullOrder.filter((key) => visibleKeys.has(key)), [fullOrder, visibleKeys]);
+  // A section the saved order lacks (new, or never placed) is written into it
+  // once, where it shows now, so its place cannot drift later.
+  useEffect(() => {
+    if (sectionOrder === undefined || sections.length === 0) return;
+    if (needsFreeze(sectionOrder, fullOrder)) void rpc.call("section_order_set", { order: fullOrder });
+  }, [sectionOrder, fullOrder, sections.length, rpc]);
 
-  const saveOrder = (keys: string[]) => void (workspace
-    ? workspaceRpc.call("workspace_save", { ...workspace, sectionOrder: keys }).then(refreshWorkspaces)
-    : rpc.call("section_order_set", { order: keys }));
-  const moveSection = (key: string, delta: -1 | 1) => {
-    const keys = [...sectionKeys];
-    const from = keys.indexOf(key);
-    const to = from + delta;
-    if (from === -1 || to < 0 || to >= keys.length) return;
-    [keys[from], keys[to]] = [keys[to]!, keys[from]!];
-    saveOrder(keys);
+  const saveOrder = (keys: string[] | null) => {
+    if (keys) void rpc.call("section_order_set", { order: keys });
   };
+  const moveSection = (key: string, delta: -1 | 1) => saveOrder(stepKey(fullOrder, visibleKeys, key, delta));
   const sectionDrag = useSectionDrag(
     useCallback(
-      (key: string, target: string, after: boolean) => {
-        const keys = sectionKeys.filter((candidate) => candidate !== key);
-        const index = keys.indexOf(target);
-        if (index === -1) return;
-        keys.splice(after ? index + 1 : index, 0, key);
-        saveOrder(keys);
-      },
-      [sectionKeys, rpc],
+      (key: string, target: string, after: boolean) => saveOrder(dropKey(fullOrder, key, target, after)),
+      [fullOrder, rpc],
     ),
   );
 
