@@ -4,6 +4,7 @@
 // all") are not questions; the owner only wants real questions in Needs me.
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { laneSections } from "./lanes.ts";
+import { parseStatusReport, reportsNothingPending } from "./thread-status.ts";
 
 const AWAITING_VERSION = 15;
 
@@ -173,8 +174,10 @@ export function createAwaiting(bb: BbPluginApi, changed: () => void) {
 
   bb.events.on("thread.idle", async ({ thread, lastAssistantText }) => {
     const text = lastAssistantText ?? "";
-    const state = declared.get(thread.id);
+    const declaredState = declared.get(thread.id);
     declared.delete(thread.id);
+    // A report that says nothing is pending wins: the thread is done, not Needs me.
+    const state = reportsNothingPending(parseStatusReport(text, Date.now())) ? "done" : declaredState;
     if (state) await apply(thread.id, flagsFor(state));
     else await classify(thread.id, text);
     // A thread you filed under "Waiting for others" goes back to Active once a

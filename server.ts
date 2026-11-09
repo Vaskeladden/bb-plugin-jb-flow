@@ -1151,7 +1151,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
     description:
       "Say what this thread waits for as your turn ends, so the user's sidebar shows it: needs_you (your reply asks the user a real question they must answer before you go on), will_report_back (you will continue by yourself, e.g. after a wait_for_ci/wait_for_run message), waiting_on_others (a person other than the user must act first), done (nothing pending). Call it as the last step of every turn, with one short note.",
     instructions:
-      "End every turn by calling thread_state as your last tool call. Pick needs_you whenever your reply asks the user a question, even if it also reports progress or waits on something else; offering optional next steps without asking is not needs_you.",
+      "End every turn by calling thread_state as your last tool call. Pick needs_you whenever your reply asks the user a question, even if it also reports progress or waits on something else; offering optional next steps without asking is not needs_you. When the work is finished and your report says \"Nothing pending.\", pick done and say the thread can be archived; never ask a question in the same reply.",
     parameters: z.object({
       state: z.enum(DECLARED_STATES),
       note: z.string().max(200).optional().describe("What you need or wait for, in a few words"),

@@ -9,6 +9,7 @@ import {
   createThreadStatus,
   parseStatusReport,
   recordThreadStatus,
+  reportsNothingPending,
 } from "./thread-status";
 
 const report = `**Goal:** Ship the UI.
@@ -255,4 +256,20 @@ it("sends the built-in prompts within the thread_reply limit", () => {
   // A longer default made every Update status press fail its input check.
   expect(DEFAULT_STATUS_PROMPT.length).toBeLessThan(THREAD_REPLY_MAX);
   expect(DEFAULT_DONKEY_PROMPT.length).toBeLessThan(THREAD_REPLY_MAX);
+});
+
+it("a report with nothing pending is done, not Needs me, unless it asks a decision", () => {
+  const done = parseStatusReport("**Goal:** Ship it\n\n**Done:** Shipped\n\n**Next:** Nothing pending.", 1);
+  expect(reportsNothingPending(done)).toBe(true);
+  const norsk = parseStatusReport("**Goal:** Fiks\n\n**Done:** Fikset\n\n**Next:** Ingenting igjen å gjøre.", 1);
+  expect(reportsNothingPending(norsk)).toBe(true);
+  const asks = parseStatusReport(
+    "**Goal:** Ship\n\n**Done:** Built\n\n**Next:** Nothing pending.\n\n### Next steps\n> **Decision needed:** Ship now?\n> 1. Yes\n> 2. No",
+    1,
+  );
+  expect(reportsNothingPending(asks)).toBe(false);
+  const offers = parseStatusReport("**Goal:** Ship\n\n**Done:** Built\n\n**Next:** Nothing pending.\n\n### Next steps\n> **Path forward:** Optional\n> 1. Tidy up · nice", 1);
+  expect(reportsNothingPending(offers)).toBe(true);
+  expect(reportsNothingPending(parseStatusReport("**Goal:** A\n\n**Done:** B\n\n**Next:** Merge the PR", 1))).toBe(false);
+  expect(reportsNothingPending(null)).toBe(false);
 });

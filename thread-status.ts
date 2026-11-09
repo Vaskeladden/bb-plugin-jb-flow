@@ -173,6 +173,19 @@ export function parseNextSteps(reply: string): Pick<StatusReport, "stepGroups" |
   return { stepGroups, ...(doing ? { doingNow: plain(doing).slice(0, 500) } : {}) };
 }
 
+// "Nothing pending." in the report's Next field, in the words agents use for it.
+const NOTHING_PENDING = /^(?:nothing (?:pending|left|more|to do)|no(?:thing)? (?:further|next) steps?|done|ingenting (?:igjen|venter|å gjøre)|alt (?:er )?ferdig)\b/i;
+
+/**
+ * The report says the work is finished: Next is "Nothing pending." and no
+ * decision is asked. Such a thread never shows as Needs me, whatever the
+ * agent declared; it is done and can be archived.
+ */
+export function reportsNothingPending(report: Pick<StatusReport, "next" | "stepGroups"> | null): boolean {
+  if (!report || !NOTHING_PENDING.test(report.next.trim())) return false;
+  return !(report.stepGroups ?? []).some((group) => group.mode === "choice");
+}
+
 export function recordThreadStatus(
   threadId: string,
   reply: string,
