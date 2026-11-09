@@ -40,6 +40,8 @@ async function sidebar(activeThreadId: string | null = "parent", rows = [
     rpc: {
       state_get: () => ({ projectShortNames: {}, stripProjectPrefixes: [], awaiting: {}, promised: {}, waitingOthers: {}, sectionOrder: [], laneSections: {}, sectionProjects: {}, threadPrs: {}, running: {}, watching: {}, snoozedSectionId: null, snoozes: {}, tags: {}, machines: { hosts: [], localHostId: null, environmentHosts: {}, threadHosts: {} }, ...flow }),
       workspaces_get: () => ({ workspaces: [], threadWorkspaces: {} }),
+      // The sidebar writes the merged section order once when a section is new to it.
+      section_order_set: () => ({ ok: true }),
     },
     sidebarThreads: { status: "ready", threads: rows,
       projects: [{ id: "project", name: "Example", isPersonal: false, href: "/projects/project", settingsHref: "/projects/project/settings" }],

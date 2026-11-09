@@ -576,7 +576,7 @@ it("keeps the saved report and reports a failed status request inline", async ()
       },
     },
   );
-  fireEvent.click(slot.getByRole("button", { name: /Update status|Refresh/ }));
+  fireEvent.click(slot.getByRole("button", { name: "Status" }));
   await slot.findByRole("alert");
   expect(slot.getByText("Review the design")).toBeTruthy();
   expect(
@@ -584,7 +584,7 @@ it("keeps the saved report and reports a failed status request inline", async ()
   ).toBeTruthy();
   expect(
     slot
-      .getByRole("button", { name: /Update status|Refresh/ })
+      .getByRole("button", { name: "Status" })
       .hasAttribute("disabled"),
   ).toBe(false);
   slot.lifecycle.unmount();
