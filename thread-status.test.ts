@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { expect, it } from "vitest";
-import { DEFAULT_DONKEY_PROMPT, DEFAULT_STATUS_PROMPT, handBackInstructions, THREAD_REPLY_MAX } from "./status-prompt";
+import { DEFAULT_DONKEY_PROMPT, DEFAULT_REVISE_PROMPT, DEFAULT_STATUS_PROMPT, handBackInstructions, THREAD_REPLY_MAX } from "./status-prompt";
 import {
   createFakePluginHost,
   makeThreadResponse,
@@ -256,6 +256,8 @@ it("sends the built-in prompts within the thread_reply limit", () => {
   // A longer default made every Update status press fail its input check.
   expect(DEFAULT_STATUS_PROMPT.length).toBeLessThan(THREAD_REPLY_MAX);
   expect(DEFAULT_DONKEY_PROMPT.length).toBeLessThan(THREAD_REPLY_MAX);
+  expect(DEFAULT_REVISE_PROMPT.length).toBeLessThan(THREAD_REPLY_MAX);
+  expect(DEFAULT_REVISE_PROMPT).toContain("claude-fable-5-2");
 });
 
 it("a report with nothing pending is done, not Needs me, unless it asks a decision", () => {

@@ -84,6 +84,28 @@ export const DEFAULT_DONKEY_PROMPT = [
   "If nothing needs a decision from me, write **Next:** with what you will do instead, and leave out the callout.",
 ].join("\n");
 
+// What the Revise button sends when the Revise prompt setting is empty: get a
+// plan review from another model, picked by how hard the work is, and carry on
+// with the better plan. Fable answers through the claude CLI; /second-opinion
+// only reaches Codex from a Claude thread, so the two routes are spelled out.
+export const DEFAULT_REVISE_PROMPT = [
+  "Revise: get another model's view on the plan for this work, use it to guide what you do next, then carry on.",
+  "",
+  "1. Write a short brief to a file in this thread's storage: the goal, what is done, what is left, the plan you intend to follow, the risks you see and your open questions. Include the files and PRs that matter.",
+  "2. Pick the reviewer by how hard the work is:",
+  "   - **Fable 5.2** for the most complex work: architecture or design choices, several systems or repos at once, data or money at stake, a bug you can't explain, or a plan with many unknowns. Run it read-only from this thread's checkout, with the brief as the prompt: `claude -p \"$(cat <brief file>)\" --model claude-fable-5-2 --effort high --allowedTools Read Grep Glob` (the prompt goes first: --allowedTools takes every word after it), and ask it for the simplest plan that finishes the work, what is missing or risky, and what it would do differently.",
+  "   - **Codex** for everything else (a clear fix, a review of a diff, a routine change): run /second-opinion with the brief.",
+  "   Say in one line which one you picked and why.",
+  "3. Compare its answer with your plan. Adopt what is better, keep what you can defend, and say in two to four short lines what changed and why.",
+  "4. Continue the work with the revised plan. Ask me only about a decision that is truly mine.",
+  "",
+  "If the reviewer can't be reached, say so and continue with your own plan. Never write its answer yourself.",
+].join("\n");
+
+export function revisePrompt(setting: unknown): string {
+  return typeof setting === "string" && setting.trim() !== "" ? setting : DEFAULT_REVISE_PROMPT;
+}
+
 export function donkeyPrompt(setting: unknown): string {
   return typeof setting === "string" && setting.trim() !== "" ? setting : DEFAULT_DONKEY_PROMPT;
 }

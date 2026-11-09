@@ -17,7 +17,7 @@ import "./live-activity.css";
 import { useMonitorCollapse } from "./monitor-collapse";
 import type { rpcContract } from "./server";
 import type { ThreadStatus } from "./thread-status";
-import { donkeyPrompt, statusPrompt } from "./status-prompt";
+import { donkeyPrompt, revisePrompt, statusPrompt } from "./status-prompt";
 
 type Sdk = ReturnType<typeof useSdk>;
 type Timeline = Awaited<ReturnType<Sdk["threads"]["timeline"]>>;
@@ -501,6 +501,7 @@ export function ActivityCard({
   hasLiveData = true,
   onRequestStatus,
   onRequestDonkey,
+  onRequestRevise,
   parked,
   onTogglePark,
   autoContinue,
@@ -521,6 +522,8 @@ export function ActivityCard({
   onRequestStatus?: () => Promise<void>;
   /** Asks the agent to explain the problem in plain words, with decisions as buttons. */
   onRequestDonkey?: () => Promise<void>;
+  /** Asks the agent to have Fable 5.2 or Codex review its plan, then continue with the revised plan. */
+  onRequestRevise?: () => Promise<void>;
   /** Parked by you: out of Needs me and the other lists until it runs again (undefined while loading). */
   parked?: boolean;
   onTogglePark?: (parked: boolean) => Promise<void>;
@@ -588,6 +591,7 @@ export function ActivityCard({
   };
   const requestStatus = () => send(onRequestStatus, "Could not request status. Try again.");
   const requestDonkey = () => send(onRequestDonkey, "Could not ask for the explanation. Try again.");
+  const requestRevise = () => send(onRequestRevise, "Could not ask for the revision. Try again.");
   const steps = tasks.flatMap((task) => task.workflow?.agents ?? []);
   const finishedSteps = steps.filter(
     (step) => step.state === "done" || step.state === "skipped",
@@ -660,6 +664,17 @@ export function ActivityCard({
             title="Ask the agent what the real problem is, in plain words with an example, and for decisions you can answer with a click"
           >
             Donkey
+          </button>
+        )}
+        {canRequest && onRequestRevise && (
+          <button
+            type="button"
+            className="jf-monitor-update jf-monitor-update-quiet"
+            disabled={requesting}
+            onClick={requestRevise}
+            title="Have Fable 5.2 (complex work) or Codex review the plan, then continue with the better plan"
+          >
+            Revise
           </button>
         )}
         {!running && onTogglePark && parked !== undefined && (
@@ -1139,6 +1154,9 @@ export function LiveActivityBanner({
       }}
       onRequestDonkey={async () => {
         await rpc.call("thread_reply", { threadId, text: donkeyPrompt(values?.donkeyPrompt) });
+      }}
+      onRequestRevise={async () => {
+        await rpc.call("thread_reply", { threadId, text: revisePrompt(values?.revisePrompt) });
       }}
       parked={wakeups.state ? (wakeups.state.parked ?? false) : undefined}
       onTogglePark={wakeups.park}

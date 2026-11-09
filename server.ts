@@ -373,6 +373,14 @@ export default async function plugin(bb: BbPluginApi) {
       experimental_multiline: true,
       default: "",
     },
+    revisePrompt: {
+      type: "string",
+      label: "Revise prompt",
+      description:
+        "What the Revise button sends: ask Fable 5.2 (complex work) or Codex through /second-opinion (the rest) to review the plan, then continue with the revised plan. Leave empty for the built-in prompt.",
+      experimental_multiline: true,
+      default: "",
+    },
     declaredState: {
       type: "boolean",
       label: "Agents state what they wait for",
