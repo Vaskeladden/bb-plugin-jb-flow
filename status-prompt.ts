@@ -16,6 +16,8 @@ export const DEFAULT_STATUS_PROMPT = [
   "",
   "**Blocked:** <only if blocked: waiting for what or whom>",
   "",
+  "**State:** <one of: Running (you keep working after this) · Needs me (you can't go on without my answer) · Autopilot (it goes on without me: CI, a deploy, another person) · Ready (nothing left for you)>",
+  "",
   "**Health:** <only if this thread changed code: the whole branch so far, not just the last step. Entropy −2…+2 (− simpler, + more machinery or duplication) · Performance −2…+2 (runtime work or waiting) · Vision: supports, mixed, deviates or unknown. One short reason each.>",
   "",
   "### Progress",

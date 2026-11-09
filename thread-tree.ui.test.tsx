@@ -115,23 +115,24 @@ it("remembers collapsed branches when returning from a filter", async () => {
   expect(JSON.parse(localStorage.getItem("jb-flow:collapsed")!)["thread:parent"]).toBe(true);
 });
 
-it("does not offer Done or archive for a parent whose hidden child is still working", async () => {
+it("does not offer archive for a Ready parent whose hidden child is still working", async () => {
   const slot = await sidebar(null, [
     thread("parent", null, { sectionId: null, updatedAt: Date.now() - 86_400_000 }),
     thread("child", "parent", { status: "active", isHidden: true }),
   ], { threadPrs: { parent: [{ repo: "acme/web-app", number: 1, title: "Fix", url: "https://github.com/acme/web-app/pull/1", state: "merged", attention: "merged", base: "main", head: "fix", stackedOn: null, checkedAt: 1 }] } });
   await waitFor(() => expect(document.querySelector('[data-sidebar-thread-id="parent"]')).toBeTruthy());
-  expect(slot.queryByRole("button", { name: /^Done/ })).toBeNull();
-  expect(slot.queryByRole("button", { name: "Archive all" })).toBeNull();
+  fireEvent.click(await slot.findByRole("button", { name: /^Ready/ }));
+  await waitFor(() => expect(document.querySelector('[data-sidebar-thread-id="parent"]')).toBeTruthy());
+  expect(slot.queryByRole("button", { name: /^Archive/ })).toBeNull();
 });
 
-it("still offers Done for an idle family whose PRs are settled", async () => {
+it("still offers Archive all under Ready for an idle family whose PRs are settled", async () => {
   const rows = [thread("parent", null, { sectionId: null, updatedAt: Date.now() - 86_400_000 }), thread("child", "parent", { sectionId: null, updatedAt: Date.now() - 86_400_000 })];
   const prs = [{ repo: "acme/web-app", number: 1, title: "Fix", url: "https://github.com/acme/web-app/pull/1", state: "merged" as const, attention: "merged" as const, base: "main", head: "fix", stackedOn: null, checkedAt: 1 }];
   const slot = await sidebar(null, rows, { threadPrs: { parent: prs, child: prs } });
-  const done = await slot.findByRole("button", { name: /^Done/ });
-  expect(done.textContent).toBe("Done2");
-  fireEvent.click(done);
+  const ready = await slot.findByRole("button", { name: /^Ready/ });
+  expect(ready.textContent).toBe("Ready2");
+  fireEvent.click(ready);
   expect(slot.getByRole("button", { name: "Archive all" })).toBeTruthy();
   expect(document.querySelector('[data-sidebar-thread-id="child"]')).toBeTruthy();
 });

@@ -217,6 +217,8 @@ test("home lists needs-you, running, PRs to act on, recent and this thread, with
     awaiting: { c: NOW - HOUR },
     running: { r: { since: NOW - HOUR, lastEventAt: NOW } },
     threadPrs: { p: [pr(7, "checks_failed"), pr(8, "checks_pending"), pr(9, "merged", { state: "merged" })] },
+    // Its red PR is watched, so p is on autopilot, not Needs you.
+    watching: { p: { kind: "ci" as const, label: "Watching web-app#7 (checks)" } },
     snoozes: { s: { until: NOW + HOUR, note: null, fromSectionId: null, snoozedAt: NOW } },
   };
   const threads = [

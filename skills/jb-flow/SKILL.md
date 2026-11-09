@@ -48,7 +48,7 @@ is by default), BB's Search threads key opens JB Flow's palette. That key is ⌘
 it was rebound. In the palette:
 - Typing searches threads, messages, PRs, workspaces, projects and actions.
 - `>` narrows to actions, `#` to PRs, `@` to workspaces and projects, and `/` to files in the open thread's checkout.
-- `is:needs`, `is:running`, `is:snoozed`, `is:unread`, `is:pinned` and `is:pr` filter threads.
+- `is:needs`, `is:running`, `is:autopilot`, `is:ready`, `is:snoozed`, `is:unread`, `is:pinned` and `is:pr` filter threads.
 - Tab on a thread lists its actions, including snooze, reply and move.
 
 When a user asks how to search messages or act on threads quickly, point them here.
@@ -85,6 +85,7 @@ as a prompt ("⏰ Snooze reminder: …").
   - `bb jb-flow unsnooze <thread-id|--self>`
   - `bb jb-flow snoozed [--json]`
   - `bb jb-flow wake-now`: runs the due check immediately
+- `bb jb-flow states [--json]`: every live, non-snoozed thread with its one state (Running, Needs me, Autopilot, Ready) and why, then counts per state.
 
 `<when>` accepts `30m`, `2h`, `3d`, `1w`, `today` (17:00), `tonight` (20:00),
 `tomorrow` (08:00), `mon`…`sun` (next one, 08:00), `next-week`, `YYYY-MM-DD`

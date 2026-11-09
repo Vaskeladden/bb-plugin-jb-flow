@@ -13,7 +13,8 @@ import { fileURLToPath } from "node:url";
 import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { createActivity } from "./activity";
-import { createAwaiting, DECLARED_STATES, waitsOnOthers } from "./awaiting";
+import { THREAD_STATE_LABEL, THREAD_STATES, threadState, type ThreadStateId } from "./thread-states";
+import { createAwaiting, DECLARED_STATES, declaredState, waitsOnOthers } from "./awaiting";
 import { nextMove, parseDecisionOptions } from "./decisions";
 import { createLeftovers, leftoverSchema } from "./leftovers";
 import { createFocus, focusReportSchema, needsAttention } from "./focus";
@@ -364,7 +365,7 @@ export default async function plugin(bb: BbPluginApi) {
       type: "boolean",
       label: "Agents state what they wait for",
       description:
-        "Ask agents to end every turn with the thread_state tool: needs you, will report back, waiting on others or done. The sidebar then shows Needs me and Waiting from the agent's own words, in any language. Off, or when a turn ends without it, the plugin reads the last message's wording instead.",
+        "Ask agents to end every turn with the thread_state tool: needs you, autopilot or ready. The sidebar then shows Needs me, Autopilot and Ready from the agent's own words, in any language. Off, or when a turn ends without it, the plugin reads the last message's wording instead.",
       default: true,
     },
     autoStatus: {
@@ -1149,17 +1150,17 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
   bb.agents.registerTool({
     name: "thread_state",
     description:
-      "Say what this thread waits for as your turn ends, so the user's sidebar shows it: needs_you (your reply asks the user a real question they must answer before you go on), will_report_back (you will continue by yourself, e.g. after a wait_for_ci/wait_for_run message), waiting_on_others (a person other than the user must act first), done (nothing pending). Call it as the last step of every turn, with one short note.",
+      "Say where this thread stands as your turn ends, so the user's sidebar shows it: needs_you (you cannot continue without the user's answer), autopilot (work continues without the user: CI, a deploy, another person, an automatic prompt), ready (nothing left for you: a green PR to ship, or finished). Call it as the last step of every turn, with one short note.",
     instructions:
-      "End every turn by calling thread_state as your last tool call. Pick needs_you whenever your reply asks the user a question, even if it also reports progress or waits on something else; offering optional next steps without asking is not needs_you. When the work is finished and your report says \"Nothing pending.\", pick done and say the thread can be archived; never ask a question in the same reply.",
+      "End every turn by calling thread_state as your last tool call. needs_you only when you cannot continue without the user's answer; if work continues anyway (waiting on CI, a deploy, another person, an automatic prompt), pick autopilot and keep any question optional, asking again when the wait ends if it still matters; ready when nothing is left for you (green PR to ship, or finished).",
     parameters: z.object({
       state: z.enum(DECLARED_STATES),
       note: z.string().max(200).optional().describe("What you need or wait for, in a few words"),
     }),
-    async execute({ state }, ctx) {
+    async execute({ state, note }, ctx) {
       if (!(await settings.get()).declaredState) return "Thread state is switched off in JB Flow's settings; nothing recorded.";
-      await awaiting.declare(ctx.threadId, state);
-      return `Recorded: ${state}.`;
+      await awaiting.declare(ctx.threadId, state, note);
+      return `Recorded: ${declaredState(state)}.`;
     },
   });
   bb.agents.registerTool({
@@ -1235,6 +1236,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
     "  bb jb-flow stop [<thread-id>|--focused]",
     "  bb jb-flow tell <text…> [--thread <id>]              Send a message (default: focused thread)",
     "  bb jb-flow needs-me [--json]                         Threads waiting on you",
+    "  bb jb-flow states [--json]                           Every thread's state and why, with counts",
     "  bb jb-flow next                                      Open the next thread that needs you",
     "  bb jb-flow wait-ci [--pr <n>] [--repo owner/name] [--for checks|reviews|both] [--self|<thread-id>]",
     "  bb jb-flow wait-run <run-id|url> [--repo owner/name] [--self|<thread-id>]  Message a thread when an Actions run ends",
@@ -1361,6 +1363,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
       { name: "stop", summary: "Stop a thread's run (default: focused)", usage: "bb jb-flow stop [<thread-id>|--focused]" },
       { name: "tell", summary: "Send a message to a thread (default: focused)", usage: "bb jb-flow tell <text…> [--thread <id>]" },
       { name: "needs-me", summary: "List threads waiting on you", usage: "bb jb-flow needs-me [--json]" },
+      { name: "states", summary: "Every live thread's state (Running, Needs me, Autopilot, Ready) and why", usage: "bb jb-flow states [--json]" },
       { name: "next", summary: "Open the next thread that needs you", usage: "bb jb-flow next" },
       { name: "wait-ci", summary: "Message a thread when its PR's CI finishes or reviews arrive", usage: "bb jb-flow wait-ci [--pr <n>] [--for checks|reviews|both] [--self|<thread-id>]" },
       { name: "wait-run", summary: "Message a thread when one GitHub Actions run finishes", usage: "bb jb-flow wait-run <run-id|url> [--repo owner/name] [--self|<thread-id>]" },
@@ -1478,6 +1481,43 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
               (pr) => `${pr.stackedOn !== null ? "  └ " : ""}${pr.repo}#${pr.number}  ${pr.attention.padEnd(17)} ${pr.title}`,
             );
             return { exitCode: 0, stdout: lines.length ? lines.join("\n") : "No PRs linked." };
+          }
+          case "states": {
+            // Every live, non-snoozed thread with its one state and why, as the sidebar sees it.
+            const snoozedSection = await findSnoozedSection();
+            const [threads, awaitingAll, threadPrsAll, watching, promised, waitingOthers] = await Promise.all([
+              bb.sdk.threads.list({ limit: 500 }),
+              awaiting.all(),
+              prTracker.byThread(),
+              watchingByThread(),
+              awaiting.promised(),
+              awaiting.waitingOthers(),
+            ]);
+            const facts = { awaiting: awaitingAll, watching, promised, waitingOthers, threadPrs: threadPrsAll };
+            const now = Date.now();
+            const rows = threads
+              .filter((thread) => thread.archivedAt === null && thread.visibility === "visible")
+              .filter((thread) => !(snoozedSection !== null && thread.sectionId === snoozedSection))
+              .map((thread) => ({ id: thread.id, title: thread.title ?? "", child: thread.parentThreadId !== null, ...threadState(thread, facts, now) }));
+            const counts = Object.fromEntries(THREAD_STATES.map((id) => [id, rows.filter((row) => row.state === id).length])) as Record<ThreadStateId, number>;
+            const exactlyOne =
+              rows.every((row) => THREAD_STATES.filter((id) => id === row.state).length === 1) &&
+              Object.values(counts).reduce((sum, count) => sum + count, 0) === rows.length;
+            if (json) return { exitCode: 0, stdout: JSON.stringify({ threads: rows, counts, exactlyOne }) };
+            const lines = THREAD_STATES.flatMap((id) => {
+              const members = rows.filter((row) => row.state === id);
+              if (members.length === 0) return [];
+              return [
+                `${THREAD_STATE_LABEL[id]} (${members.length})`,
+                ...members.map((row) => `  ${row.child ? "↳ " : ""}${row.title || row.id}  (${row.id})\n      ${row.reason}${row.badges.length ? ` [${row.badges.join(", ")}]` : ""}`),
+                "",
+              ];
+            });
+            lines.push(
+              THREAD_STATES.map((id) => `${THREAD_STATE_LABEL[id]}: ${counts[id]}`).join(" · ") + ` · total ${rows.length}`,
+              `every thread has exactly one state: ${exactlyOne ? "yes" : "no"}`,
+            );
+            return { exitCode: 0, stdout: lines.join("\n") };
           }
           case "classify": {
             const snoozedSection = await findSnoozedSection();

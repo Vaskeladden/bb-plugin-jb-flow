@@ -62,7 +62,7 @@ import {
 import type { RunInfo, ThreadPr } from "./ui-extras";
 import { SNOOZE_PRESETS, formatWhen, parseWhen } from "./when";
 import { LANE_NAMES, matchLanes, resolveLanes, sectionNames, type Lane, type LaneId, type LaneSections } from "./lanes";
-import { needsMe } from "./studio-model";
+import { THREAD_STATE_LABEL, threadState, type ThreadStateId, type ThreadStateResult } from "./thread-states";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -546,6 +546,7 @@ function ThreadRow({
   onRename,
   onNewSection,
   machine,
+  threadState: stateInfo,
   workspaceState, onWorkspace,
 }: {
   thread: PluginSidebarThread;
@@ -555,6 +556,8 @@ function ThreadRow({
   project: PluginSidebarProject | undefined;
   /** The machine it runs on; `remote` when it's not the machine BB runs on (tagged on the row). */
   machine: { name: string; remote: boolean } | null;
+  /** Its one state and why (none while snoozed), shown as the row's tooltip. */
+  threadState?: ThreadStateResult;
   active: boolean;
   tags: readonly string[];
   snoozeUntil: number | undefined;
@@ -648,6 +651,8 @@ function ThreadRow({
             drag.start(thread, event);
           }}
           data-jb-flow-row={thread.id}
+          data-thread-state={stateInfo?.state}
+          title={stateInfo ? `${THREAD_STATE_LABEL[stateInfo.state]}: ${stateInfo.reason}` : undefined}
           data-sidebar-thread-shortcut-target=""
           data-sidebar-thread-id={thread.id}
           aria-current={active ? "page" : undefined}
@@ -1185,28 +1190,20 @@ function rowWaiting(state: FlowState | null | undefined, threadId: string): RowW
   return promised === undefined ? undefined : { kind: "promised", since: promised };
 }
 
-/** Sent by "Nudge" on a stalled thread. */
-const NUDGE =
-  "You said you'd report back, but this thread went idle and nothing is running. Check the current state now, then continue or tell me what's blocking.";
-/** A promise to report back counts as stalled after this long idle (matches awaiting.ts). */
-const STALLED_AFTER_MS = 60 * 60_000;
-
 /** An unfiled thread counts as done only after this long without activity. */
 const DONE_AFTER_MS = 2 * 3_600_000;
 
 // --- smart filters (computed sets, not your sections) --------------------------------
 
-type SmartId = "needs" | "stalled" | "running" | "prAction" | "readyToMerge" | "autopilot" | "done";
+/** The four thread states (thread-states.ts): every awake thread is in exactly one. */
+type SmartId = ThreadStateId;
 /** A smart filter, or one machine's threads (`machine:<hostId>`). */
 type Filter = SmartId | `machine:${string}`;
 const SMART: Array<{ id: SmartId; label: string; glyph: GlyphName; tone: string; hint: string }> = [
-  { id: "needs", label: "Needs me", glyph: "question", tone: "text-amber-500", hint: "Waiting for your input, asking you something, or failed" },
-  { id: "stalled", label: "Stalled", glyph: "hourglass", tone: "text-orange-500", hint: "The agent said it would report back, but has been idle for over an hour. Nudge it" },
-  { id: "running", label: "Running", glyph: "spinner", tone: "text-sky-500", hint: "Agents working right now" },
-  { id: "prAction", label: "PR action", glyph: "pr", tone: "text-red-500", hint: "An open PR has failing checks, requested changes or conflicts" },
-  { id: "readyToMerge", label: "Ready to merge", glyph: "pr", tone: "text-green-500", hint: "An open PR is green and ready" },
-  { id: "autopilot", label: "Autopilot", glyph: "hourglass", tone: "text-violet-500", hint: "Waiting on CI, a release or a usage-limit reset; you'll be pinged" },
-  { id: "done", label: "Done", glyph: "check", tone: "text-green-500", hint: "Unfiled threads whose PRs are all merged or closed" },
+  { id: "needs", label: THREAD_STATE_LABEL.needs, glyph: "question", tone: "text-amber-500", hint: "Can't continue without you: a question or prompt, a failure, a red PR nothing watches, or a promise to report back that went quiet for an hour" },
+  { id: "running", label: THREAD_STATE_LABEL.running, glyph: "spinner", tone: "text-sky-500", hint: "Agents working right now" },
+  { id: "autopilot", label: THREAD_STATE_LABEL.autopilot, glyph: "hourglass", tone: "text-violet-500", hint: "Continues without you: watching CI or a run, a usage-limit reset, will report back, or waiting on someone else" },
+  { id: "ready", label: THREAD_STATE_LABEL.ready, glyph: "check", tone: "text-green-500", hint: "Nothing left for the agent: a green PR to ship, or finished (archive it)" },
 ];
 
 /** "Alex’s Mac Studio" → "Mac Studio". */
@@ -1494,54 +1491,37 @@ function TriageThreadList({
     const awakeTree = filterThreadTree(buildThreadTree(visible.filter((thread) => !isSnoozed(thread))), matchesTag);
     const allAwake = flattenThreadTree(awakeTree).filter(matchesTag);
 
-    const needs = (thread: PluginSidebarThread) => needsMe(thread, state?.awaiting);
-    const busy = (thread: PluginSidebarThread) => thread.status === "active" || thread.status === "starting";
-    // Promised to report back, but nothing is running and nothing is watching for it.
-    const isStalled = (thread: PluginSidebarThread) =>
-      !busy(thread) &&
-      state?.promised[thread.id] !== undefined &&
-      state?.watching[thread.id] === undefined &&
-      Date.now() - thread.updatedAt > STALLED_AFTER_MS;
+    const now = Date.now();
+    const stateOf = (thread: PluginSidebarThread) => threadState(thread, state, now).state;
     const openPrs = (thread: PluginSidebarThread) =>
       threadPrs(state?.threadPrs[thread.id], null).filter((pr) => pr.state === "open" || pr.state === "draft");
-    const sets: Record<SmartId, (thread: PluginSidebarThread) => boolean> = {
-      needs,
-      stalled: (thread) => isStalled(thread),
-      running: busy,
-      prAction: (thread) =>
-        !busy(thread) && openPrs(thread).some((pr) => ["checks_failed", "changes_requested", "conflicts"].includes(pr.attention)),
-      readyToMerge: (thread) => !busy(thread) && openPrs(thread).some((pr) => pr.attention === "ready_to_merge"),
-      autopilot: (thread) => state?.watching[thread.id] !== undefined,
-      // Only unfiled threads: anything you put in a section stays there. A thread
-      // you just worked in, or are looking at, stays in Active for a while.
-      done: (thread) =>
-        thread.sectionId === null &&
-        thread.id !== activeThreadId &&
-        Date.now() - thread.updatedAt > DONE_AFTER_MS &&
-        !busy(thread) &&
-        !needs(thread) &&
-        state?.watching[thread.id] === undefined &&
-        state?.awaiting[thread.id] === undefined &&
-        !isStalled(thread) &&
-        allSettled(threadPrs(state?.threadPrs[thread.id], null)),
-    };
+    const sets = Object.fromEntries(
+      SMART.map((entry) => [entry.id, (thread: PluginSidebarThread) => stateOf(thread) === entry.id]),
+    ) as Record<SmartId, (thread: PluginSidebarThread) => boolean>;
+    // Ready threads that are finished, for Archive all: unfiled (anything you put in
+    // a section stays there), every PR settled, quiet for a while, and not open.
+    const finished = (thread: PluginSidebarThread) =>
+      thread.sectionId === null &&
+      thread.id !== activeThreadId &&
+      now - thread.updatedAt > DONE_AFTER_MS &&
+      sets.ready(thread) &&
+      allSettled(threadPrs(state?.threadPrs[thread.id], null));
     const smartCounts = Object.fromEntries(
       SMART.map((entry) => [entry.id, allAwake.filter(sets[entry.id]).length]),
     ) as Record<SmartId, number>;
     // Archive cascades beyond the current filter/workspace. Check the complete
-    // family, including hidden and snoozed descendants, before offering Done.
+    // family, including hidden and snoozed descendants, before offering it.
     const fullTree = indexThreadTree(buildThreadTree(allThreads.filter((thread) => !thread.isArchived)));
-    const doneTree = awakeTree.filter((node) => flattenThreadTree([fullTree.get(node.thread.id)!]).every(sets.done));
-    smartCounts.done = flattenThreadTree(doneTree).filter(matchesTag).length;
+    const finishedRoots = new Set(
+      awakeTree.filter((node) => flattenThreadTree([fullTree.get(node.thread.id)!]).every(finished)).map((node) => node.thread.id),
+    );
     const machineCounts = new Map<string, number>();
     for (const thread of allAwake) {
       const host = threadHost(thread, machines);
       if (host) machineCounts.set(host, (machineCounts.get(host) ?? 0) + 1);
     }
 
-    const selectedTree = smart === "done"
-      ? doneTree
-      : smart?.startsWith("machine:")
+    const selectedTree = smart?.startsWith("machine:")
         ? filterThreadTree(awakeTree, (thread) => threadHost(thread, machines) === smart.slice("machine:".length))
         : smart !== null ? filterThreadTree(awakeTree, sets[smart as SmartId]) : awakeTree;
     const treeNodes = indexThreadTree([...selectedTree, ...snoozedTree]);
@@ -1568,9 +1548,9 @@ function TriageThreadList({
     }
 
     // A smart filter keeps your sections and shows only the matching threads in
-    // each (fork: stable-created-order). "Done" keeps its flat list so Archive all
+    // each (fork: stable-created-order). "Ready" keeps a flat list so Archive all
     // still has one place to act on.
-    if (smart !== null && smart !== "done") {
+    if (smart !== null && smart !== "ready") {
       const entry = SMART.find((candidate) => candidate.id === smart)!;
       const members = awake;
       const inSection = (key: string, thread: PluginSidebarThread) => sectionKey(thread.sectionId) === key;
@@ -1594,34 +1574,35 @@ function TriageThreadList({
       return { smartCounts, machineCounts, groups: filtered, treeNodes };
     }
 
-    // Done keeps the single computed list.
+    // Ready: green PRs to ship first, then finished threads with Archive all
+    // (only those that qualify: unfiled, settled, quiet; never the open thread).
     if (smart !== null) {
-      const entry = SMART.find((candidate) => candidate.id === smart)!;
-      const members = awake;
-      return {
-        treeNodes,
-        smartCounts,
-        machineCounts,
-        groups: [
-          {
-            id: `smart:${smart}`,
-            title: entry.label,
-            threads: members,
-            dynamic: { glyph: entry.glyph, tone: entry.tone },
-            action:
-              smart === "done" && members.length > 0
-                ? { label: "Archive all", run: () => void rpc.call("archive", { threadIds: members.map((thread) => thread.id) }) }
-                : undefined,
-          },
-        ] satisfies Group[],
-      };
+      const toShip = awake.filter((thread) => openPrs(thread).some((pr) => pr.attention === "ready_to_merge"));
+      const rest = awake.filter((thread) => !toShip.includes(thread));
+      const archivable = rest.filter((thread) => finishedRoots.has(thread.id));
+      const groups: Group[] = [];
+      if (toShip.length > 0)
+        groups.push({ id: "smart:ready-ship", title: "Ready to ship", threads: toShip, dynamic: { glyph: "pr", tone: "text-green-500" } });
+      groups.push({
+        id: "smart:ready",
+        title: toShip.length > 0 ? "Finished" : THREAD_STATE_LABEL.ready,
+        threads: rest,
+        dynamic: { glyph: "check", tone: "text-green-500" },
+        action:
+          archivable.length > 0
+            ? {
+                label: archivable.length === rest.length ? "Archive all" : `Archive ${archivable.length} settled`,
+                run: () => void rpc.call("archive", { threadIds: archivable.map((thread) => thread.id) }),
+              }
+            : undefined,
+      });
+      return { treeNodes, smartCounts, machineCounts, groups };
     }
 
     // Waiting on someone else: the agent said so, or every open PR waits on a reviewer.
     // Only unfiled threads move automatically; your own sections stay as you set them.
     const waitsOnOthers = (thread: PluginSidebarThread) => {
-      if (thread.sectionId !== null || busy(thread) || needs(thread) || isStalled(thread)) return false;
-      if (state?.awaiting[thread.id] !== undefined) return false;
+      if (thread.sectionId !== null || !sets.autopilot(thread)) return false;
       if (state?.waitingOthers[thread.id] !== undefined) return true;
       const open = openPrs(thread);
       return open.length > 0 && open.every((pr) => pr.attention === "review_requested");
@@ -1841,7 +1822,7 @@ function TriageThreadList({
                       node={treeNodes.get(root.id)!}
                       isCollapsed={isCollapsed}
                       toggle={toggle}
-                      needsAttention={(thread) => needsMe(thread, state?.awaiting)}
+                      needsAttention={(thread) => threadState(thread, state, now).state === "needs"}
                       filtered={smart !== null || tagFilter !== null}
                       renderRow={(thread, childrenSummary) => (
                         <ThreadRow
@@ -1870,6 +1851,7 @@ function TriageThreadList({
                           onRename={() => setRenameTarget(thread)}
                           onNewSection={() => setSectionDialog({ mode: "create", name: "", threadId: thread.id })}
                           machine={rowMachine(thread)}
+                          threadState={group.id === "snoozed" ? undefined : threadState(thread, state, now)}
                         />
                       )}
                     />

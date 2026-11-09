@@ -89,8 +89,9 @@ again or Escape to close it.
   - A group with more matches than fit ends in *Show all N …*. For threads, messages
     and archived matches, that opens *Threads & messages*: every match, up to 50 per
     group from BB's full-text search.
-  - Filters: `is:needs`, `is:running`, `is:snoozed`, `is:unread`, `is:pinned` and
-    `is:pr` narrow threads, with or without text.
+  - Filters: `is:needs`, `is:running`, `is:autopilot`, `is:ready` (the sidebar's four
+    states), `is:snoozed`, `is:unread`, `is:pinned` and `is:pr` narrow threads, with or
+    without text.
 - **Act without opening.**
   - Enter opens the selected item. ⌘Enter opens a thread in a split, or a PR's thread.
   - Tab (or →) lists everything you can do to the selected thread, ready to filter:
@@ -290,13 +291,16 @@ tests in `npm test`.
 ### Triage sidebar
 A replacement thread list. **Installing JB Flow switches your sidebar to it**: bb uses the first installed thread-list plugin while **Settings → Appearance → Thread list** is on *Automatic*. Switch back there at any time. The list offers to create its lane sections the first time (or use **Settings → JB Flow → Triage lanes**).
 
+- **States.** Every thread that isn't snoozed is in exactly one of four states, first match wins. The filter chips above the list show each state's count; click one to see only those threads, still in their sections. Hover a row for its state and why ("red PR web-app#7 (checks failed), nothing watching"); `bb jb-flow states` lists them all.
+  1. **Running**: an agent is working on it now (a red PR is noted).
+  2. **Needs me**: it can't continue without you. A prompt or permission request, a failed turn, a last message that asks you an actual question (a sentence ending in "?", or answer buttons, a form or a decision board; a menu of next steps like "Reply go for all" is not a question), an open PR with failing checks, requested changes or conflicts that nothing is watching, or an agent that said it would report back but has been idle for over an hour with nothing watching it.
+  3. **Autopilot**: it continues without you. JB Flow watches its CI, a run, a release or a usage-limit reset; the agent will report back (within the hour); or it waits on someone else, including PRs that only wait for a reviewer.
+  4. **Ready**: nothing left for the agent. A green PR to ship (listed first), or finished. **Archive all** archives the finished ones that are unfiled, idle for 2+ hours and whose PRs are all merged or closed; the thread you have open is never included.
+  Bold is the only read signal, so unread status updates stay in their section, in bold.
 - **Groups**, top to bottom:
-  - **Needs me**: threads blocked on a prompt or permission, failed threads, and idle threads whose last message asks you an actual question (a sentence ending in "?", or answer buttons, a form or a decision board), read or not. A menu of next steps ("pick one", "Reply go for all") without a question is not an ask. Status follows the next action; bold is the only read signal, so unread status updates stay in their section, in bold.
-  - **Stalled** (only when there are some): the agent said it would report back ("I'll report when it finishes", "I'm checking every 30 seconds") but the thread has been idle for over an hour with nothing watching it. **Nudge all** asks each one to check and continue.
   - **Lanes**: Priority, Active, Waiting for others, Pick up later, Low priority. Each is matched to one of your sections by name the first time, then remembered by id, so you can rename a lane's section (right-click → Rename…) and it keeps its number key and behaviour. Active is the unsectioned bucket and can't be renamed.
   - **Waiting for others** fills itself (marked *auto*): unfiled threads whose agent says it's waiting on someone else ("Alex is the only pending reviewer", "once he sends the invoices", "tell me when he replies"), or whose open PRs all wait on a reviewer. Threads you file there yourself go back to Active by themselves when a turn ends without waiting on anyone. Snoozed threads that were waiting on someone ("when it wakes, I'll check for Sam's reply") wake into Waiting for others instead of their old section.
   - Any other sections, collapsed.
-  - **Done**, collapsed: unfiled threads idle for 2+ hours whose PRs are all merged or closed, with Archive all. The thread you have open never moves here.
   - Snoozed threads, collapsed.
 - **Machines**: once threads run on more than one machine, each machine gets a filter chip with its thread count (e.g. *Mac Studio 48*, *MacBook Air 2*); click one to see that machine's threads across all sections. Rows on a machine other than the one BB runs on carry a short tag (*Air*, *MBP*), and the hover preview always names the machine.
 - **Rows** show a project chip with a stable colour per project, tags, and an age fade for idle threads.
@@ -458,6 +462,7 @@ bb jb-flow your-move [--json] [--open]
 bb jb-flow pr-radar [--json] [--open]
 bb jb-flow deck                 # one cheap JSON snapshot for the Stream Deck
 bb jb-flow leftovers [--refresh] [--json] [--clean]
+bb jb-flow states [--json]     # every thread's state (Running, Needs me, Autopilot, Ready) and why, with counts
 bb jb-flow classify            # debug: where every open thread lands, with its last message
 bb jb-flow focused [--json]
 bb jb-flow decisions [<thread-id>] [--json]

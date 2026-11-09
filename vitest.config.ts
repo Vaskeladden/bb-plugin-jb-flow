@@ -16,6 +16,7 @@ export default defineConfig({
       "live-activity.ui.test.tsx",
       "timeline-activity.ui.test.tsx",
       "thread-status.test.ts",
+      "thread-states.test.ts",
       "section-order.test.ts",
       "decision-choices.ui.test.tsx",
       "palette.ui.test.tsx",

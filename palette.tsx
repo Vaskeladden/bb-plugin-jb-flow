@@ -1363,7 +1363,7 @@ function PaletteTips({ mod }: { mod: string }) {
         <dt><kbd>#</kbd></dt><dd>Pull requests, or <code>#123</code> for one</dd>
         <dt><kbd>@</kbd></dt><dd>Workspaces and projects</dd>
         <dt><kbd>/</kbd></dt><dd>Files in this thread's checkout</dd>
-        <dt><code>is:needs</code></dt><dd>Also <code>is:running</code>, <code>is:snoozed</code>, <code>is:unread</code>, <code>is:pinned</code>, <code>is:pr</code></dd>
+        <dt><code>is:needs</code></dt><dd>Also <code>is:running</code>, <code>is:autopilot</code>, <code>is:ready</code>, <code>is:snoozed</code>, <code>is:unread</code>, <code>is:pinned</code>, <code>is:pr</code></dd>
         <dt><kbd>⇥</kbd></dt><dd>A thread's actions: reply, snooze <code>tomorrow</code>, <code>tag urgent</code>, move</dd>
         <dt><kbd>{mod}↵</kbd></dt><dd>Open a thread in a split</dd>
       </dl>

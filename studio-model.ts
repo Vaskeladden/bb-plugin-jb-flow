@@ -1,5 +1,6 @@
 import type { PluginSidebarThread } from "@get-bb/plugin-sdk/app";
 import type { FlowState } from "./server";
+import { isOpenPr, prsSettled, threadState } from "./thread-states.ts";
 
 export type StudioStatus =
   "attention" | "running" | "review" | "waiting" | "done" | "idle";
@@ -21,7 +22,8 @@ type ThreadFacts = Pick<
 type WorkflowFacts = Pick<
   FlowState,
   "awaiting" | "watching" | "threadPrs" | "snoozes" | "waitingOthers"
->;
+> &
+  Partial<Pick<FlowState, "promised">>;
 
 /**
  * Blocked on you (prompt, permission, failure), or idle with a last message that
@@ -41,35 +43,18 @@ export function needsMe(
   );
 }
 
+/** Studio's finer view of the thread's one state (thread-states.ts). */
 export function studioStatus(
   thread: ThreadFacts,
   state: WorkflowFacts | null,
 ): StudioStatus {
-  if (thread.status === "error" || needsMe(thread, state?.awaiting))
-    return "attention";
-  if (["active", "starting", "stopping"].includes(thread.status))
-    return "running";
+  const { state: current } = threadState(thread, state);
+  if (current === "needs") return "attention";
+  if (current === "running") return "running";
+  if (current === "autopilot" || state?.snoozes[thread.id]) return "waiting";
   const prs = state?.threadPrs[thread.id] ?? [];
-  if (
-    prs.some((pr) =>
-      ["checks_failed", "changes_requested", "conflicts"].includes(
-        pr.attention,
-      ),
-    )
-  )
-    return "attention";
-  if (prs.some((pr) => pr.attention === "ready_to_merge")) return "review";
-  if (
-    state?.watching[thread.id] ||
-    state?.waitingOthers[thread.id] !== undefined ||
-    state?.snoozes[thread.id]
-  )
-    return "waiting";
-  if (
-    prs.length > 0 &&
-    prs.every((pr) => pr.state === "merged" || pr.state === "closed")
-  )
-    return "done";
+  if (prs.some((pr) => isOpenPr(pr) && pr.attention === "ready_to_merge")) return "review";
+  if (prsSettled(prs)) return "done";
   return "idle";
 }
 

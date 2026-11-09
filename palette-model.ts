@@ -5,7 +5,7 @@
 import type { PluginSidebarThread } from "@get-bb/plugin-sdk/app";
 import type { PrStatus } from "./prs";
 import type { FlowState } from "./server";
-import { needsMe } from "./studio-model.ts";
+import { threadState, type ThreadStateId } from "./thread-states.ts";
 
 export type Range = [start: number, end: number];
 
@@ -23,20 +23,25 @@ export const SCOPE_LABEL: Record<Exclude<Scope, "all">, string> = {
   files: "Files",
 };
 
-export type Filter = "needs" | "running" | "snoozed" | "unread" | "pinned" | "pr";
+export type Filter = ThreadStateId | "snoozed" | "unread" | "pinned" | "pr";
 const FILTER_WORDS: Record<string, Filter> = {
   needs: "needs",
   "needs-me": "needs",
   me: "needs",
   running: "running",
   working: "running",
+  autopilot: "autopilot",
+  auto: "autopilot",
+  waiting: "autopilot",
+  ready: "ready",
+  done: "ready",
   snoozed: "snoozed",
   unread: "unread",
   pinned: "pinned",
   pr: "pr",
   prs: "pr",
 };
-export const FILTER_HINTS = ["is:needs", "is:running", "is:snoozed", "is:unread", "is:pinned", "is:pr"] as const;
+export const FILTER_HINTS = ["is:needs", "is:running", "is:autopilot", "is:ready", "is:snoozed", "is:unread", "is:pinned", "is:pr"] as const;
 
 export type Query = { text: string; tokens: string[]; filters: Filter[] };
 
@@ -208,7 +213,8 @@ export type PaletteThread = Pick<
   | "latestAttentionAt"
 > & { environment: { branchName: string | null } | null };
 export type PalettePr = Pick<PrStatus, "repo" | "number" | "title" | "url" | "state" | "attention">;
-export type PaletteFlow = Pick<FlowState, "awaiting" | "running" | "watching" | "snoozes" | "tags"> & {
+export type PaletteFlow = Pick<FlowState, "awaiting" | "running" | "watching" | "snoozes" | "tags"> &
+  Partial<Pick<FlowState, "promised" | "waitingOthers">> & {
   threadPrs: Record<string, readonly PalettePr[]>;
 };
 /** An action the palette can rank; palette.tsx keeps what it runs, by id. */
@@ -314,16 +320,18 @@ const ACTIONABLE = new Set(["conflicts", "checks_failed", "changes_requested", "
 const DAY_MS = 86_400_000;
 const busy = (thread: PaletteThread) => thread.status === "active" || thread.status === "starting";
 const visible = (thread: PaletteThread) => !thread.isHidden && !thread.isArchived;
-const attention = (thread: PaletteThread, flow: PaletteFlow | null) =>
-  thread.status === "error" || needsMe(thread, flow?.awaiting);
+const stateOf = (thread: PaletteThread, flow: PaletteFlow | null) => threadState(thread, flow).state;
+const attention = (thread: PaletteThread, flow: PaletteFlow | null) => stateOf(thread, flow) === "needs";
 
 function passes(thread: PaletteThread, filters: readonly Filter[], flow: PaletteFlow | null): boolean {
   return filters.every((filter) => {
     switch (filter) {
       case "needs":
-        return attention(thread, flow);
       case "running":
-        return busy(thread);
+      case "autopilot":
+      case "ready":
+        // The thread's one state (thread-states.ts); snoozed threads have none.
+        return flow?.snoozes[thread.id] === undefined && stateOf(thread, flow) === filter;
       case "snoozed":
         return flow?.snoozes[thread.id] !== undefined;
       case "unread":

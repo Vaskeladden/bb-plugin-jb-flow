@@ -116,22 +116,38 @@ export function waitsOnOthers(text: string): boolean {
   return WAITS.test(text.trim().slice(-700)) && !asksUser(text);
 }
 
-/** A promise counts as stalled after the thread has been idle this long. */
-export const STALLED_AFTER_MS = 60 * 60_000;
+export { STALLED_AFTER_MS } from "./thread-states.ts";
 
-/** What the agent says the thread waits for when its turn ends (the `thread_state` tool). */
-export const DECLARED_STATES = ["needs_you", "will_report_back", "waiting_on_others", "done"] as const;
+/**
+ * What the agent says as its turn ends (the `thread_state` tool): needs_you,
+ * autopilot or ready. The older will_report_back / waiting_on_others (both
+ * autopilot) and done (ready) are still accepted from sessions that know them.
+ */
+export const DECLARED_STATES = ["needs_you", "autopilot", "ready", "will_report_back", "waiting_on_others", "done"] as const;
 export type DeclaredState = (typeof DECLARED_STATES)[number];
 
-/** The three flags a declared state sets; the agent's own words beat any pattern. */
-export function flagsFor(state: DeclaredState): { asks: boolean; promised: boolean; waiting: boolean } {
-  return { asks: state === "needs_you", promised: state === "will_report_back", waiting: state === "waiting_on_others" };
+/** The new name for an older declared state. */
+export function declaredState(state: DeclaredState): "needs_you" | "autopilot" | "ready" {
+  if (state === "will_report_back" || state === "waiting_on_others") return "autopilot";
+  if (state === "done") return "ready";
+  return state;
+}
+
+/**
+ * The three flags a declared state sets; the agent's own words beat any pattern.
+ * Autopilot waits on someone else when its note or reply says so (that never
+ * goes stale); otherwise the agent continues by itself, and an idle promise
+ * with nothing watching turns into Needs me after an hour.
+ */
+export function flagsFor(state: DeclaredState, text = ""): { asks: boolean; promised: boolean; waiting: boolean } {
+  const others = state === "waiting_on_others" || (state === "autopilot" && waitsOnOthers(text));
+  return { asks: state === "needs_you", promised: declaredState(state) === "autopilot" && !others, waiting: others };
 }
 
 export function createAwaiting(bb: BbPluginApi, changed: () => void) {
   const kv = bb.storage.kv;
   /** Declared during the current turn, read when it ends. Memory is enough: a turn lives in one process. */
-  const declared = new Map<string, DeclaredState>();
+  const declared = new Map<string, { state: DeclaredState; note: string }>();
   // Threads go idle together; one queue for all three maps so a write never
   // replaces another thread's result with a stale copy.
   let lock: Promise<unknown> = Promise.resolve();
@@ -167,22 +183,23 @@ export function createAwaiting(bb: BbPluginApi, changed: () => void) {
       waiting: waitsOnOthers(text),
     });
   /** The agent's own statement for this turn; applied at once and again when the turn ends. */
-  const declare = async (threadId: string, state: DeclaredState) => {
-    declared.set(threadId, state);
-    await apply(threadId, flagsFor(state));
+  const declare = async (threadId: string, state: DeclaredState, note = "") => {
+    declared.set(threadId, { state, note });
+    await apply(threadId, flagsFor(state, note));
   };
 
   bb.events.on("thread.idle", async ({ thread, lastAssistantText }) => {
     const text = lastAssistantText ?? "";
-    const declaredState = declared.get(thread.id);
+    const said = declared.get(thread.id);
     declared.delete(thread.id);
-    // A report that says nothing is pending wins: the thread is done, not Needs me.
-    const state = reportsNothingPending(parseStatusReport(text, Date.now())) ? "done" : declaredState;
-    if (state) await apply(thread.id, flagsFor(state));
+    // A report that says nothing is pending wins: the thread is ready, not Needs me.
+    const state: DeclaredState | undefined = reportsNothingPending(parseStatusReport(text, Date.now())) ? "ready" : said?.state;
+    const flags = state ? flagsFor(state, `${text}\n${said?.note ?? ""}`) : null;
+    if (flags) await apply(thread.id, flags);
     else await classify(thread.id, text);
     // A thread you filed under "Waiting for others" goes back to Active once a
-    // turn ends without waiting on anyone (it asks you, or it's done).
-    if (state ? state === "waiting_on_others" : waitsOnOthers(text)) return;
+    // turn ends without waiting on anyone (it asks you, or it's ready).
+    if (flags ? flags.waiting : waitsOnOthers(text)) return;
     const current = await bb.sdk.threads.get({ threadId: thread.id }).catch(() => null);
     if (current?.sectionId == null) return;
     const { waiting } = await laneSections(bb);
