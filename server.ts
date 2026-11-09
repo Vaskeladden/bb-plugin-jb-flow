@@ -1,4 +1,5 @@
 import { createWorkspaceStorage } from "./workspace-storage";
+import { lastReply } from "./turn-reply";
 import { workspaceSchema, workspaceStateSchema } from "./workspaces";
 import { createThreadStatus, threadStatusSchema } from "./thread-status";
 import { countSince } from "./catch-up-model";
@@ -917,7 +918,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
     thread_status: ({ threadId, refresh }) => threadStatus.get(threadId, refresh),
     thread_preview: async ({ threadId }) => {
       const [output, outline] = await Promise.all([
-        bb.sdk.threads.output({ threadId }).catch(() => ({ output: null })),
+        lastReply(bb, threadId).then((output) => ({ output })),
         bb.sdk.threads.conversationOutline({ threadId }).catch(() => ({ items: [] as Array<{ role: string; preview: string }> })),
       ]);
       const reply = output.output ?? "";
@@ -982,8 +983,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
       return { opened: next.id };
     },
     decision_options: async ({ threadId }) => {
-      const output = await bb.sdk.threads.output({ threadId }).catch(() => ({ output: null }));
-      return nextMove(output.output ?? "");
+      return nextMove((await lastReply(bb, threadId)) ?? "");
     },
     thread_reply: async ({ threadId, text }) => {
       await bb.sdk.threads.send({ threadId, mode: "queue-if-active", input: [{ type: "text", text, mentions: [] }] });
@@ -1152,7 +1152,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
     description:
       "Say where this thread stands as your turn ends, so the user's sidebar shows it: needs_you (you cannot continue without the user's answer), autopilot (work continues without the user: CI, a deploy, another person, an automatic prompt), ready (nothing left for you: a green PR to ship, or finished). Call it as the last step of every turn, with one short note.",
     instructions:
-      "End every turn by calling thread_state as your last tool call. needs_you only when you cannot continue without the user's answer; if work continues anyway (waiting on CI, a deploy, another person, an automatic prompt), pick autopilot and keep any question optional, asking again when the wait ends if it still matters; ready when nothing is left for you (green PR to ship, or finished).",
+      "End every turn by calling thread_state as your last tool call. needs_you only when you cannot continue without the user's answer; if work continues anyway (waiting on CI, a deploy, another person, an automatic prompt), pick autopilot and keep any question optional, asking again when the wait ends if it still matters; ready when nothing is left for you (green PR to ship, or finished). Write nothing after the call, or repeat your whole reply: only the turn's last message is shown in full and read for questions; text before the call is folded into the work log, so a report, question or ui block followed by a short sign-off is hidden.",
     parameters: z.object({
       state: z.enum(DECLARED_STATES),
       note: z.string().max(200).optional().describe("What you need or wait for, in a few words"),
@@ -1160,7 +1160,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
     async execute({ state, note }, ctx) {
       if (!(await settings.get()).declaredState) return "Thread state is switched off in JB Flow's settings; nothing recorded.";
       await awaiting.declare(ctx.threadId, state, note);
-      return `Recorded: ${declaredState(state)}.`;
+      return `Recorded: ${declaredState(state)}. End the turn now without more text if your reply is already written; a sign-off after it would hide the reply in the work log.`;
     },
   });
   bb.agents.registerTool({

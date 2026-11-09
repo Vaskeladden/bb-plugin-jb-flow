@@ -3,6 +3,7 @@
 // or is the work wrapped up? Menus of next steps ("pick one", "Reply go for
 // all") are not questions; the owner only wants real questions in Needs me.
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
+import { lastReply, turnReply } from "./turn-reply.ts";
 import { laneSections } from "./lanes.ts";
 import { parseStatusReport, reportsNothingPending } from "./thread-status.ts";
 
@@ -228,7 +229,7 @@ export function createAwaiting(bb: BbPluginApi, changed: () => void) {
   };
 
   bb.events.on("thread.idle", async ({ thread, lastAssistantText }) => {
-    const text = lastAssistantText ?? "";
+    const text = (await turnReply(bb, thread.id, lastAssistantText)) ?? "";
     const said = declared.get(thread.id);
     declared.delete(thread.id);
     // A report that says nothing is pending wins: the thread is ready, not Needs me.
@@ -262,8 +263,8 @@ export function createAwaiting(bb: BbPluginApi, changed: () => void) {
         for (const thread of threads) {
           if (signal.aborted) return;
           if (thread.archivedAt !== null || thread.status !== "idle" || thread.parentThreadId !== null) continue;
-          const output = await bb.sdk.threads.output({ threadId: thread.id, signal }).catch(() => null);
-          if (output?.output) await classify(thread.id, output.output);
+          const output = await lastReply(bb, thread.id, signal);
+          if (output) await classify(thread.id, output);
         }
         if (!signal.aborted) await kv.set("awaitingVersion", AWAITING_VERSION);
       }

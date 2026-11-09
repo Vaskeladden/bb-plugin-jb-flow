@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { lastReply, turnReply } from "./turn-reply.ts";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 
@@ -236,11 +237,8 @@ export function createThreadStatus(bb: BbPluginApi, changed: () => void) {
       const previous = await read(id);
       const reply =
         supplied === undefined
-          ? await bb.sdk.threads.output({ threadId: id }).then(
-              (result) => result.output,
-              () => null,
-            )
-          : supplied;
+          ? await lastReply(bb, id)
+          : await turnReply(bb, id, supplied);
       if (disposed) return previous;
       const next = recordThreadStatus(id, reply ?? "", previous, Date.now());
       if (next && next !== previous) {
