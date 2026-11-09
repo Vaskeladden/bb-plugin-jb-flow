@@ -49,8 +49,9 @@ export function withEarlierReply(messages: readonly Message[], last: string): st
 /** The thread's last reply as the user should read it. */
 export async function turnReply(bb: BbPluginApi, threadId: string, last: string | null, signal?: AbortSignal): Promise<string | null> {
   if (last === null || !isSignOff(last)) return last;
-  const timeline = await bb.sdk.threads
-    .timeline({ threadId, segmentLimit: "1", includeNestedRows: "true", deferContent: "false", signal })
+  // A failed read (or a host without timelines) keeps the last message as it is.
+  const timeline = await Promise.resolve()
+    .then(() => bb.sdk.threads.timeline({ threadId, segmentLimit: "1", includeNestedRows: "true", deferContent: "false", signal }))
     .catch(() => null);
   return withEarlierReply(assistantMessages(timeline), last);
 }
