@@ -77,7 +77,9 @@ schedule checks for due snoozes. A due thread goes back to the section it came
 from and is marked unread. If a note was given, the note is sent to the thread
 as a prompt ("⏰ Snooze reminder: …").
 
-- From inside a thread, prefer the `snooze_thread` agent tool: `{ when, note? }`.
+- From inside a thread, prefer the `snooze_thread` agent tool: `{ when, note? }`,
+  and `unsnooze_thread` to wake it. Never move a snoozed thread out of Snoozed
+  yourself: only unsnooze puts it back in the section it came from.
 - CLI:
   - `bb jb-flow snooze <thread-id|--self> <when> [--note <text>]`
   - `bb jb-flow unsnooze <thread-id|--self>`

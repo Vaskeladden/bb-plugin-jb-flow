@@ -1110,6 +1110,19 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
     },
   });
   bb.agents.registerTool({
+    name: "unsnooze_thread",
+    description:
+      "Wake the current BB thread from its snooze now, putting it back in the section it was snoozed from.",
+    instructions:
+      "When the user asks to unsnooze or wake this thread, call unsnooze_thread. Never move a snoozed thread out of Snoozed yourself (bb thread update, section changes): that loses the section it came from.",
+    parameters: z.object({}),
+    async execute(_input, ctx) {
+      return (await unsnooze(ctx.threadId))
+        ? "Woke this thread; it is back in the section it was snoozed from."
+        : "This thread is not snoozed.";
+    },
+  });
+  bb.agents.registerTool({
     name: "wait_for_ci",
     description:
       "Wait for a GitHub PR's CI checks and/or new reviews/comments without polling. Registers a watch and returns immediately; when checks finish (with the failed log on failure), a review or comment arrives, or the PR merges/closes, a message is sent to this thread once it is idle; nothing is sent while it is still working. End your turn after calling it.",
@@ -1202,7 +1215,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
     agentSettings = next;
   });
   bb.agents.configure(() => ({
-    tools: ["snooze_thread", "wait_for_ci", "wait_for_run", "pr_status", ...(agentSettings.declaredState ? ["thread_state"] : [])],
+    tools: ["snooze_thread", "unsnooze_thread", "wait_for_ci", "wait_for_run", "pr_status", ...(agentSettings.declaredState ? ["thread_state"] : [])],
     skills: [],
     ...(agentSettings.autoStatus && agentSettings.threadMonitor
       ? { instructions: handBackInstructions(agentSettings.statusPrompt) }
