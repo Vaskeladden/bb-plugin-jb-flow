@@ -142,6 +142,10 @@ export const rpcContract = defineRpcContract({
       parked: z.boolean().optional(),
     }),
   },
+  thread_move: {
+    input: z.object({ threadId: z.string(), sectionId: z.string().nullable(), via: z.string().max(40) }),
+    output: z.object({ ok: z.boolean() }),
+  },
   thread_park: {
     input: z.object({ threadId: z.string(), parked: z.boolean() }),
     output: z.object({ parked: z.boolean() }),
@@ -594,7 +598,7 @@ export default async function plugin(bb: BbPluginApi) {
       const output = await bb.sdk.threads.output({ threadId }).catch(() => ({ output: null }));
       if (waitsOnOthers(output.output ?? "")) restoreTo = waiting;
     }
-    await bb.sdk.threads.update({ threadId, sectionId: restoreTo });
+    await moveThread(threadId, restoreTo, reason === "due" ? "snooze ended" : "unsnoozed");
     if (reason === "due") {
       await bb.sdk.threads.markUnread({ threadId });
       if (record.note !== null) {
@@ -848,6 +852,18 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
 
   // --- RPC ------------------------------------------------------------------
 
+  // Every section move the sidebar, the palette or a snooze makes, with where
+  // it came from, so a thread that lands somewhere unexpected can be traced
+  // (`bb jb-flow moves`). bb itself keeps no history of section changes.
+  type Move = { at: number; threadId: string; from: string | null; to: string | null; via: string };
+  async function moveThread(threadId: string, sectionId: string | null, via: string) {
+    const from = await bb.sdk.threads.get({ threadId }).then((thread) => thread.sectionId, () => null);
+    await bb.sdk.threads.update({ threadId, sectionId });
+    const log = (await bb.storage.kv.get<Move[]>("moveLog")) ?? [];
+    await bb.storage.kv.set("moveLog", [...log, { at: Date.now(), threadId, from, to: sectionId, via }].slice(-300));
+    bb.log.info(`moved ${threadId} from ${from ?? "none"} to ${sectionId ?? "none"} via ${via}`);
+  }
+
   let stateBuild: Promise<FlowState> | null = null;
   async function buildState(): Promise<FlowState> {
     return {
@@ -890,6 +906,10 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
       watches: await watchers.wakeupsFor(threadId),
       parked: threadId in (await awaiting.parked()),
     }),
+    thread_move: async ({ threadId, sectionId, via }) => {
+      await moveThread(threadId, sectionId, via);
+      return { ok: true };
+    },
     thread_park: async ({ threadId, parked }) => {
       await awaiting.park(threadId, parked);
       return { parked };
@@ -1377,6 +1397,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
       { name: "tell", summary: "Send a message to a thread (default: focused)", usage: "bb jb-flow tell <text…> [--thread <id>]" },
       { name: "needs-me", summary: "List threads waiting on you", usage: "bb jb-flow needs-me [--json]" },
       { name: "states", summary: "Every live thread's state (Running, Needs me, Autopilot, Ready) and why", usage: "bb jb-flow states [--json]" },
+      { name: "moves", summary: "Recent section moves and what made them", usage: "bb jb-flow moves [<thread-id>] [--json]" },
       { name: "next", summary: "Open the next thread that needs you", usage: "bb jb-flow next" },
       { name: "wait-ci", summary: "Message a thread when its PR's CI finishes or reviews arrive", usage: "bb jb-flow wait-ci [--pr <n>] [--for checks|reviews|both] [--self|<thread-id>]" },
       { name: "wait-run", summary: "Message a thread when one GitHub Actions run finishes", usage: "bb jb-flow wait-run <run-id|url> [--repo owner/name] [--self|<thread-id>]" },
@@ -1637,6 +1658,15 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
             if (!match || threadId === undefined) break;
             await prTracker.link(threadId, { repo: match[1]!, number: Number(match[2]) }, remove);
             return { exitCode: 0, stdout: `${remove ? "Unlinked" : "Linked"} ${match[1]}#${match[2]}.` };
+          }
+          case "moves": {
+            const only = args.find((arg) => !arg.startsWith("--"));
+            const log = ((await bb.storage.kv.get<Move[]>("moveLog")) ?? []).filter((move) => !only || move.threadId === only);
+            if (json) return { exitCode: 0, stdout: JSON.stringify(log) };
+            const names = new Map((await bb.sdk.threadSections.list()).map((section) => [section.id, section.name]));
+            const name = (id: string | null) => (id === null ? "no section" : (names.get(id) ?? id));
+            const lines = log.slice(-40).map((move) => `${new Date(move.at).toLocaleString("nb-NO")}  ${move.threadId}  ${name(move.from)} → ${name(move.to)}  (${move.via})`);
+            return { exitCode: 0, stdout: lines.length ? lines.join("\n") : "No moves recorded yet." };
           }
           case "watches": {
             const result = await watchers.status();

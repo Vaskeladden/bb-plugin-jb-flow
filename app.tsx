@@ -580,8 +580,9 @@ function ThreadRow({
   const sdk = useSdk();
   const split = useSidebarThreadSplit(thread.id);
   const drag = useContext(DragContext);
+  const moveRpc = useRpc<typeof rpcContract>();
   const moveTo = (sectionId: string | null) => {
-    void sdk.threads.update({ threadId: thread.id, sectionId });
+    void moveRpc.call("thread_move", { threadId: thread.id, sectionId, via: "thread menu" });
   };
   const copy = (text: string) => {
     void navigator.clipboard.writeText(text);
@@ -612,8 +613,8 @@ function ThreadRow({
       event.preventDefault();
       // The row leaves its place; keep the keyboard on the list (inbox style).
       const next = neighbourRowId(event.currentTarget);
-      void sdk.threads
-        .update({ threadId: thread.id, sectionId: lane.sectionId })
+      void rpc
+        .call("thread_move", { threadId: thread.id, sectionId: lane.sectionId, via: `key ${event.key}` })
         .then(() => focusRowSoon(next));
     } else if (event.key === "e") {
       event.preventDefault();
@@ -1355,11 +1356,12 @@ function TriageThreadList({
   const [confirm, setConfirm] = useState<{ title: string; body: string; label: string; run: () => Promise<unknown> } | null>(null);
   const sdk = useSdk();
   const actions = useSidebarThreadActions();
+  const dropRpc = useRpc<typeof rpcContract>();
   const onDrop = useCallback(
     (threadId: string, sectionId: string | null) => {
-      void sdk.threads.update({ threadId, sectionId });
+      void dropRpc.call("thread_move", { threadId, sectionId, via: "drag" });
     },
-    [sdk],
+    [dropRpc],
   );
   const drag = useThreadDrag(onDrop);
 
@@ -1904,7 +1906,7 @@ function TriageThreadList({
                     await workspaceRpc.call("workspace_save", { ...workspace, sectionIds: [...workspace.sectionIds, section.id] });
                     await refreshWorkspaces();
                   }
-                  if (sectionDialog.threadId) await sdk.threads.update({ threadId: sectionDialog.threadId, sectionId: section.id });
+                  if (sectionDialog.threadId) await dropRpc.call("thread_move", { threadId: sectionDialog.threadId, sectionId: section.id, via: "new section" });
                   return section;
                 })
               : sdk.threadSections.update({ id: sectionDialog.id!, name }).then((result) => {

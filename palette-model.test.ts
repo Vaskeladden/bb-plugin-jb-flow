@@ -318,3 +318,11 @@ test("the files scope keeps bb's order and highlights names", () => {
   // Files only show in their own scope.
   assert.equal(group(search(input({ files }), "all", "pal"), "files"), undefined);
 });
+
+// 9 Nov 2026: typing «bugs» to find the Bugs page moved the current thread into Bugs.
+test("a section's name alone never offers to move the thread; «move» does", () => {
+  const actions = [{ id: "section:sec_bugs", title: "Move to 🐛 bugs", keywords: "section move", thread: true }];
+  const found = (query: string) => search(input({ actions, currentThreadId: "here" }), "all", query).flatMap((section) => section.items.map((item) => item.id));
+  assert.ok(!found("bugs").includes("action:section:sec_bugs"));
+  assert.ok(found("move bugs").includes("action:section:sec_bugs"));
+});

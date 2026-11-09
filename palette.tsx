@@ -561,7 +561,7 @@ export function Palette({
         title: `Move to ${lane.title}`,
         keywords: "lane section move",
         icon: <Glyph name="folderMove" />,
-        run: () => sdk.threads.update({ threadId: id, sectionId: lane.sectionId }),
+        run: () => rpc.call("thread_move", { threadId: id, sectionId: lane.sectionId, via: "palette" }),
       });
     }
     const laneSections = new Set(lanes.map((lane) => lane.sectionId));
@@ -572,7 +572,7 @@ export function Palette({
         title: `Move to ${section.name}`,
         keywords: "section move",
         icon: <Glyph name="folderMove" />,
-        run: () => sdk.threads.update({ threadId: id, sectionId: section.id }),
+        run: () => rpc.call("thread_move", { threadId: id, sectionId: section.id, via: "palette" }),
       });
     }
     if (workspaces.length > 0) {

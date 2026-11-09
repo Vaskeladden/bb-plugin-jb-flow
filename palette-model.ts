@@ -598,6 +598,9 @@ export function search(input: PaletteInput, scope: Scope, raw: string): Section[
         push("actions", { item, score: boost - order / 100 });
         return;
       }
+      // Moving the thread only when the query asks for it: typing a section's
+      // name («bugs») to find its page must never move the current thread.
+      if (/^(?:lane|section):/.test(action.id) && !tokens.some((token) => /^(?:move|mv|flytt)/i.test(token))) return;
       const match = matchFields(tokens, [
         { key: "title", text: action.title, weight: 1 },
         { key: "keywords", text: action.keywords ?? "", weight: 0.6, strict: true },
