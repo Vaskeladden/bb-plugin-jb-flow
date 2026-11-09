@@ -37,6 +37,7 @@ import {
   DialogDescription,
 } from "./components/ui/dialog";
 import { WORKSPACE_BAR_EVENT } from "./workspace-topbar";
+import { useSidebarThreadActions } from "./thread-actions";
 import { PALETTE_EVENT } from "./palette";
 import "./workspaces.css";
 
@@ -239,7 +240,7 @@ function WorkspaceTopBarInner() {
         <WorkspaceManager mode="first" />
       ) : (
         <>
-          <WorkspaceManager mode="new" />
+          <NewThreadButton projectId={active?.projectIds[0]} />
           <SearchButton />
           <WorkspaceManager mode="manage" />
         </>
@@ -382,14 +383,30 @@ export function WorkspaceRouteBridge() {
   return null;
 }
 
+/** The bar's +: a new thread in the open workspace's first project. New workspaces are made in the settings. */
+function NewThreadButton({ projectId }: { projectId: string | undefined }) {
+  const actions = useSidebarThreadActions();
+  return (
+    <button
+      type="button"
+      className="jf-workspace-manage"
+      aria-label="New thread here"
+      title="New thread in this workspace"
+      onClick={() => actions.openNewThread({ ...(projectId ? { projectId } : {}), focusPrompt: true })}
+    >
+      <Icon name="Plus" className="size-4" />
+    </button>
+  );
+}
+
 /** Shown for threads and tools outside every workspace (id "unassigned"). */
 export const NO_WORKSPACE = "No workspace";
 
 /**
- * "first": no workspaces yet, a labelled call to action. "new": a + that opens
- * the dialog on a blank workspace. "manage": the settings gear.
+ * "first": no workspaces yet, a labelled call to action. "manage": the
+ * settings gear, where a new workspace is made too.
  */
-function WorkspaceManager({ mode }: { mode: "first" | "new" | "manage" }) {
+function WorkspaceManager({ mode }: { mode: "first" | "manage" }) {
   return (
     <Dialog>
       <DialogTrigger asChild>
@@ -400,15 +417,6 @@ function WorkspaceManager({ mode }: { mode: "first" | "new" | "manage" }) {
             title="Workspaces group projects, threads, sections and tools into tabs"
           >
             <Icon name="Plus" className="size-4" /> Create your first workspace
-          </button>
-        ) : mode === "new" ? (
-          <button
-            type="button"
-            className="jf-workspace-manage"
-            aria-label="New workspace"
-            title="New workspace"
-          >
-            <Icon name="Plus" className="size-4" />
           </button>
         ) : (
           <button
@@ -429,7 +437,7 @@ function WorkspaceManager({ mode }: { mode: "first" | "new" | "manage" }) {
             threads, sections and tools follow.
           </DialogDescription>
         </div>
-        <WorkspaceSettings startNew={mode !== "manage"} />
+        <WorkspaceSettings startNew={mode === "first"} />
       </DialogContent>
     </Dialog>
   );

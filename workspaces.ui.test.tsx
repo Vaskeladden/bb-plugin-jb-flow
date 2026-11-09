@@ -148,6 +148,13 @@ it("switches tabs, filters the actual navigation, keeps shared tools, and opens 
     method: "toCompose",
     options: { projectId: "h" },
   });
+  // The bar's +: a new thread in the open workspace, not a new workspace.
+  fireEvent.click(topbar.getByRole("button", { name: "New thread here" }));
+  expect(topbar.inspection.navigateCalls.at(-1)).toMatchObject({
+    method: "toCompose",
+    options: { projectId: "h", focusPrompt: true },
+  });
+  expect(topbar.queryByRole("button", { name: "New workspace" })).toBeNull();
   fireEvent.click(slot.getByRole("button", { name: "More tools" }));
   expect(slot.getByRole("button", { name: "Globex DevOps" })).toBeTruthy();
   fireEvent.click(slot.getByRole("button", { name: "Globex DevOps" }));
