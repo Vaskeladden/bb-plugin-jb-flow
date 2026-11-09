@@ -102,6 +102,8 @@ const stateSchema = z.object({
   promised: z.record(z.string(), z.number()),
   /** Idle threads whose next step is someone else's (thread id → since). */
   waitingOthers: z.record(z.string(), z.number()),
+  /** Threads you parked: shown as Parked, in no other state (thread id → since). */
+  parked: z.record(z.string(), z.number()).optional(),
   /** Your order for non-lane sections (section ids); unlisted ones follow by creation. */
   sectionOrder: z.array(z.string()),
   /** Lane → section id, pinned so renaming a lane's section keeps its role. */
@@ -137,7 +139,12 @@ export const rpcContract = defineRpcContract({
     output: z.object({
       autoContinue: z.object({ enabled: z.boolean(), scheduledAt: z.number().nullable() }),
       watches: z.array(z.object({ kind: z.enum(["ci", "release"]), key: z.string(), label: z.string() })),
+      parked: z.boolean().optional(),
     }),
+  },
+  thread_park: {
+    input: z.object({ threadId: z.string(), parked: z.boolean() }),
+    output: z.object({ parked: z.boolean() }),
   },
   wakeup_cancel: {
     input: z.object({ threadId: z.string(), kind: z.enum(["ci", "release"]), key: z.string() }),
@@ -847,6 +854,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
       awaiting: await awaiting.all(),
       promised: await awaiting.promised(),
       waitingOthers: await awaiting.waitingOthers(),
+      parked: await awaiting.parked(),
       sectionOrder: (await bb.storage.kv.get<string[]>("sectionOrder")) ?? [],
       sectionProjects: (await bb.storage.kv.get<Record<string, string>>("sectionProjects")) ?? {},
       laneSections: await laneSections(bb),
@@ -880,7 +888,12 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
         scheduledAt: await watchers.autoContinueAt(threadId),
       },
       watches: await watchers.wakeupsFor(threadId),
+      parked: threadId in (await awaiting.parked()),
     }),
+    thread_park: async ({ threadId, parked }) => {
+      await awaiting.park(threadId, parked);
+      return { parked };
+    },
     wakeup_cancel: async ({ threadId, kind, key }) => {
       await watchers.cancelWakeup(threadId, kind, key);
       return { ok: true };
@@ -1493,7 +1506,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
               awaiting.promised(),
               awaiting.waitingOthers(),
             ]);
-            const facts = { awaiting: awaitingAll, watching, promised, waitingOthers, threadPrs: threadPrsAll };
+            const facts = { awaiting: awaitingAll, watching, promised, waitingOthers, parked: await awaiting.parked(), threadPrs: threadPrsAll };
             const now = Date.now();
             const rows = threads
               .filter((thread) => thread.archivedAt === null && thread.visibility === "visible")

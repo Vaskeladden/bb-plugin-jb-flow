@@ -501,6 +501,8 @@ export function ActivityCard({
   hasLiveData = true,
   onRequestStatus,
   onRequestDonkey,
+  parked,
+  onTogglePark,
   autoContinue,
   onToggleAutoContinue,
   watches = [],
@@ -519,6 +521,9 @@ export function ActivityCard({
   onRequestStatus?: () => Promise<void>;
   /** Asks the agent to explain the problem in plain words, with decisions as buttons. */
   onRequestDonkey?: () => Promise<void>;
+  /** Parked by you: out of Needs me and the other lists until it runs again (undefined while loading). */
+  parked?: boolean;
+  onTogglePark?: (parked: boolean) => Promise<void>;
   data: ActivityData;
   running: boolean;
   startedAt: number | null;
@@ -655,6 +660,17 @@ export function ActivityCard({
             title="Ask the agent what the real problem is, in plain words with an example, and for decisions you can answer with a click"
           >
             Donkey
+          </button>
+        )}
+        {!running && onTogglePark && parked !== undefined && (
+          <button
+            type="button"
+            className="jf-monitor-update jf-monitor-update-quiet"
+            aria-pressed={parked}
+            onClick={() => void onTogglePark(!parked).catch(() => {})}
+            title={parked ? "Bring the thread back into Needs me, Autopilot or Ready" : "Put the thread aside: it leaves Needs me and the other lists until it runs again"}
+          >
+            {parked ? "Unpark" : "Park"}
           </button>
         )}
         {!collapsed && (
@@ -1006,6 +1022,7 @@ export function ActivityCard({
 type Wakeups = {
   autoContinue: { enabled: boolean; scheduledAt: number | null };
   watches: { kind: "ci" | "release"; key: string; label: string }[];
+  parked?: boolean;
 };
 
 /** What will wake this thread (auto-continue, CI/review watches, release waits), kept in step with the server. */
@@ -1035,7 +1052,14 @@ function useWakeups(threadId: string, enabled: boolean) {
     },
     [rpc, threadId],
   );
-  return { state, toggle, cancel };
+  const park = useCallback(
+    async (next: boolean) => {
+      const { parked } = await rpc.call("thread_park", { threadId, parked: next });
+      setState((current) => (current ? { ...current, parked } : current));
+    },
+    [rpc, threadId],
+  );
+  return { state, toggle, cancel, park };
 }
 
 export function LiveActivityBanner({
@@ -1116,6 +1140,8 @@ export function LiveActivityBanner({
       onRequestDonkey={async () => {
         await rpc.call("thread_reply", { threadId, text: donkeyPrompt(values?.donkeyPrompt) });
       }}
+      parked={wakeups.state ? (wakeups.state.parked ?? false) : undefined}
+      onTogglePark={wakeups.park}
       running={running}
       startedAt={runningSince[threadId]?.since ?? taskStart}
       now={now}

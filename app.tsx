@@ -1213,6 +1213,7 @@ const SMART: Array<{ id: SmartId; label: string; glyph: GlyphName; tone: string;
   { id: "running", label: THREAD_STATE_LABEL.running, glyph: THREAD_STATE_STYLE.running.glyph, tone: THREAD_STATE_STYLE.running.tone, hint: "Agents working right now" },
   { id: "autopilot", label: THREAD_STATE_LABEL.autopilot, glyph: THREAD_STATE_STYLE.autopilot.glyph, tone: THREAD_STATE_STYLE.autopilot.tone, hint: "Continues without you: watching CI or a run, a usage-limit reset, will report back, or waiting on someone else" },
   { id: "ready", label: THREAD_STATE_LABEL.ready, glyph: THREAD_STATE_STYLE.ready.glyph, tone: THREAD_STATE_STYLE.ready.tone, hint: "Nothing left for the agent: a green PR to ship, or finished (archive it)" },
+  { id: "parked", label: THREAD_STATE_LABEL.parked, glyph: THREAD_STATE_STYLE.parked.glyph, tone: THREAD_STATE_STYLE.parked.tone, hint: "Put aside by you with Park: in no other list until it runs again or you unpark it" },
 ];
 
 /** "Alex’s Mac Studio" → "Mac Studio". */

@@ -213,6 +213,9 @@ export function createAwaiting(bb: BbPluginApi, changed: () => void) {
   const getPromised = async () => (await kv.get<Record<string, number>>("promised")) ?? {};
   const setPromised = flag("promised");
   const getWaiting = async () => (await kv.get<Record<string, number>>("waitingOthers")) ?? {};
+  // Parked by you: out of every state list until it runs again or you unpark it.
+  const getParked = async () => (await kv.get<Record<string, number>>("parked")) ?? {};
+  const setParked = flag("parked");
   const setWaiting = flag("waitingOthers");
   const apply = async (threadId: string, flags: { asks: boolean; promised: boolean; waiting: boolean }) => {
     await set(threadId, flags.asks);
@@ -250,6 +253,7 @@ export function createAwaiting(bb: BbPluginApi, changed: () => void) {
     await set(thread.id, false);
     await setPromised(thread.id, false);
     await setWaiting(thread.id, false);
+    await setParked(thread.id, false);
   };
   bb.events.on("thread.active", clear);
   bb.events.on("thread.archived", clear);
@@ -288,5 +292,5 @@ export function createAwaiting(bb: BbPluginApi, changed: () => void) {
     }
   }
 
-  return { all: get, promised: getPromised, waitingOthers: getWaiting, prune, declare };
+  return { all: get, promised: getPromised, waitingOthers: getWaiting, parked: getParked, park: setParked, prune, declare };
 }

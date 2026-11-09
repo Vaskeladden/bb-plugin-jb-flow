@@ -76,6 +76,7 @@ const PATHS = {
     <path d="M2 9V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H20a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-1M2 13h10m-3-3 3 3-3 3" />
   ),
   terminal: <path d="m4 17 6-6-6-6M12 19h8" />,
+  pause: <path d="M9 5v14M15 5v14" />,
   dot: <circle cx="12" cy="12" r="3.5" fill="currentColor" stroke="none" />,
 } as const;
 

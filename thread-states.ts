@@ -5,21 +5,23 @@
 import type { PrStatus } from "./prs";
 import type { FlowState } from "./server";
 
-export type ThreadStateId = "running" | "needs" | "autopilot" | "ready";
-export const THREAD_STATES: readonly ThreadStateId[] = ["running", "needs", "autopilot", "ready"];
+export type ThreadStateId = "running" | "needs" | "autopilot" | "ready" | "parked";
+export const THREAD_STATES: readonly ThreadStateId[] = ["running", "needs", "autopilot", "ready", "parked"];
 export const THREAD_STATE_LABEL: Record<ThreadStateId, string> = {
   running: "Running",
   needs: "Needs me",
   autopilot: "Autopilot",
   ready: "Ready",
+  parked: "Parked",
 };
 
 /** One look per state, shared by the filter chips and every thread row's icon. */
-export const THREAD_STATE_STYLE: Record<ThreadStateId, { glyph: "spinner" | "question" | "hourglass" | "check"; tone: string }> = {
+export const THREAD_STATE_STYLE: Record<ThreadStateId, { glyph: "spinner" | "question" | "hourglass" | "check" | "pause"; tone: string }> = {
   running: { glyph: "spinner", tone: "text-sky-500" },
   needs: { glyph: "question", tone: "text-amber-500" },
   autopilot: { glyph: "hourglass", tone: "text-violet-500" },
   ready: { glyph: "check", tone: "text-green-500" },
+  parked: { glyph: "pause", tone: "text-muted-foreground" },
 };
 
 /** A promise to report back counts as stalled after the thread has been idle this long. */
@@ -36,6 +38,7 @@ export type ThreadStateThread = {
 export type ThreadStateFacts = Pick<FlowState, "awaiting" | "watching"> & {
   promised?: Record<string, number>;
   waitingOthers?: Record<string, number>;
+  parked?: Record<string, number>;
   threadPrs: Record<string, readonly Pr[]>;
 };
 export type ThreadStateResult = {
@@ -77,6 +80,7 @@ export function idleFor(ms: number): string {
  *    a red PR nothing watches, or a promise to report back that went stale).
  * 3. Autopilot: it continues without you (a watch, a fresh promise, someone else's move).
  * 4. Ready: nothing left for the agent (a green PR to ship, or finished).
+ * Parked: you put it aside; nothing shows until it runs again or you unpark it.
  */
 export function threadState(
   thread: ThreadStateThread,
@@ -97,6 +101,7 @@ export function threadState(
     return { state: "needs", reason: "waiting for your input or permission", badges: [] };
   if (isBusy(thread))
     return { state: "running", reason: red.length > 0 ? `agent working; ${redReason}` : "agent working", badges: red.length > 0 ? ["red PR"] : [] };
+  if (facts?.parked?.[thread.id] !== undefined) return { state: "parked", reason: "parked by you", badges: [] };
   if (thread.status === "error" || thread.indicator === "unread-error")
     return { state: "needs", reason: "the last turn failed", badges: [] };
   if (facts?.awaiting[thread.id] !== undefined) return { state: "needs", reason: "asked you a question", badges: [] };

@@ -38,6 +38,9 @@ describe("threadState: one state per thread, by precedence", () => {
     const cases: Array<[string, ThreadStateThread, ThreadStateFacts, string]> = [
       ["declared needs + busy", busy, facts({ awaiting: { t: NOW } }), "running"],
       ["busy + red PR", busy, facts({ threadPrs: { t: [pr("checks_failed")] } }), "running"],
+      ["parked + asked you", idle, facts({ parked: { t: NOW }, awaiting: { t: NOW } }), "parked"],
+      ["parked + red PR", idle, facts({ parked: { t: NOW }, threadPrs: { t: [pr("checks_failed")] } }), "parked"],
+      ["parked + busy", busy, facts({ parked: { t: NOW } }), "running"],
       ["busy + watching", busy, facts({ watching: { t: ci } }), "running"],
       ["busy + green PR", busy, facts({ threadPrs: { t: [pr("ready_to_merge")] } }), "running"],
       ["prompt while busy", thread({ status: "active", hasPendingInteraction: true }), facts(), "needs"],
