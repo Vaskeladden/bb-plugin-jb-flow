@@ -91,7 +91,7 @@ import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { Studio, StudioReview, STUDIO_REVIEW_TAB } from "./studio";
 import { mountShellAppearance, ShellAppearancePreference } from "./shell-appearance";
-import { LiveActivityBanner } from "./live-activity";
+import { LiveActivityBanner, STATUS_REQUEST_SHORTCUTS, requestThreadStatus } from "./live-activity";
 import { PALETTE_EVENT, Palette, usePaletteTrigger } from "./palette";
 import { CatchUpHomeEntry, CatchUpOverlay, CatchUpPage, useCatchUpBadge, useCatchUpTrigger } from "./catch-up";
 import { CATCH_UP_EVENT } from "./catch-up-model";
@@ -2722,6 +2722,24 @@ export default definePluginApp((app) => {
     isAvailable: inThread,
     run: ({ openPanel }) => {
       openPanel({ actionId: "prs", title: "Pull requests" });
+    },
+  });
+  app.commands.register({
+    id: "update-status",
+    title: "Ask this thread's agent for a fresh status report",
+    defaultShortcut: STATUS_REQUEST_SHORTCUTS.status,
+    isAvailable: inThread,
+    run: ({ threadId }) => {
+      if (threadId) requestThreadStatus(threadId, "status");
+    },
+  });
+  app.commands.register({
+    id: "donkey",
+    title: "Donkey: ask this thread's agent to explain in plain words",
+    defaultShortcut: STATUS_REQUEST_SHORTCUTS.donkey,
+    isAvailable: inThread,
+    run: ({ threadId }) => {
+      if (threadId) requestThreadStatus(threadId, "donkey");
     },
   });
   app.commands.register({

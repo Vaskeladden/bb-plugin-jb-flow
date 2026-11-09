@@ -710,6 +710,14 @@ export function ago(timestamp: number, now: number): string {
 
 export type Shortcut = { key: string; mod?: boolean; meta?: boolean; control?: boolean; alt?: boolean; shift?: boolean };
 export type Platform = "mac" | "windows" | "linux";
+/** The platform bb runs on, from the browser. */
+export function currentPlatform(): Platform {
+  const nav = navigator as Navigator & { userAgentData?: { platform?: string } };
+  const name = (nav.userAgentData?.platform || nav.platform || nav.userAgent || "").toLowerCase();
+  if (name.includes("mac") || name.includes("iphone") || name.includes("ipad")) return "mac";
+  return name.includes("win") ? "windows" : "linux";
+}
+
 export const DEFAULT_SEARCH_SHORTCUT: Shortcut = { key: "k", mod: true };
 type Keybinding = { command: string; shortcut: Shortcut; when?: { all?: readonly string[]; none?: readonly string[] } };
 const PLATFORM_FLAG: Record<Platform, string> = { mac: "macPlatform", windows: "windowsPlatform", linux: "linuxPlatform" };

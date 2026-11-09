@@ -7,6 +7,7 @@ import {
   ActivityCard,
   LiveActivityBanner,
   elapsed,
+  requestThreadStatus,
   type ActivityData,
   type ActivityTask,
 } from "./live-activity";
@@ -531,6 +532,76 @@ it("requests the actual Status prompt only on click and leaves the composer draf
     }),
   ]);
   expect(slot.inspection.composer.text).toBe("My unsent draft");
+  slot.lifecycle.unmount();
+});
+it("answers the Status and Donkey shortcuts for the focused thread, one request at a time", async () => {
+  let finish: () => void = () => {};
+  const request = vi.fn(
+    () => new Promise<{ ok: boolean }>((resolve) => (finish = () => resolve({ ok: true }))),
+  );
+  const slot = renderSlot(
+    { component: LiveActivityBanner },
+    { runningSince: {} },
+    {
+      settings: { threadMonitor: true },
+      composer: { scope: { kind: "thread", threadId: "t1" }, isRunning: false },
+      sdk: {
+        subscribe: () => () => {},
+        threads: {
+          timeline: async () => ({ ...snapshot, activeBackgroundCommands: [], pendingTodos: null }),
+        },
+      },
+      rpc: { thread_status: () => savedMonitor, thread_reply: request },
+    },
+  );
+  await slot.findByText("Review the design");
+  expect(slot.getByRole("button", { name: "Status" }).getAttribute("title")).toMatch(/\((⌥⇧|Alt\+Shift\+)U\)$/);
+  expect(slot.getByRole("button", { name: "Donkey" }).getAttribute("title")).toMatch(/\((⌥⇧|Alt\+Shift\+)I\)$/);
+
+  act(() => requestThreadStatus("t2", "status"));
+  expect(request).not.toHaveBeenCalled();
+
+  act(() => requestThreadStatus("t1", "status"));
+  await waitFor(() => expect(request).toHaveBeenCalledTimes(1));
+  expect(request.mock.calls[0]).toEqual([
+    expect.objectContaining({ threadId: "t1", text: expect.stringContaining("**Goal:**") }),
+  ]);
+  act(() => requestThreadStatus("t1", "donkey"));
+  expect(request).toHaveBeenCalledTimes(1);
+
+  await act(async () => finish());
+  await waitFor(() => expect(slot.getByRole("button", { name: "Donkey" }).hasAttribute("disabled")).toBe(false));
+  act(() => requestThreadStatus("t1", "donkey"));
+  await waitFor(() => expect(request).toHaveBeenCalledTimes(2));
+  expect(request.mock.calls[1]).toEqual([
+    expect.objectContaining({ threadId: "t1", text: expect.stringContaining("**Decision needed:**") }),
+  ]);
+  await act(async () => finish());
+  slot.lifecycle.unmount();
+});
+it("ignores the shortcuts while the agent is working", async () => {
+  const request = vi.fn(async () => ({ ok: true }));
+  const slot = renderSlot(
+    { component: LiveActivityBanner },
+    { runningSince: {} },
+    {
+      settings: { threadMonitor: true },
+      composer: { scope: { kind: "thread", threadId: "t1" }, isRunning: true },
+      sdk: {
+        subscribe: () => () => {},
+        threads: {
+          timeline: async () => ({ ...snapshot, activeBackgroundCommands: [], pendingTodos: null }),
+        },
+      },
+      rpc: { thread_status: () => savedMonitor, thread_reply: request },
+    },
+  );
+  await slot.findByRole("region", { name: "Agent activity" });
+  expect(slot.queryByRole("button", { name: "Status" })).toBeNull();
+  act(() => requestThreadStatus("t1", "status"));
+  act(() => requestThreadStatus("t1", "donkey"));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(request).not.toHaveBeenCalled();
   slot.lifecycle.unmount();
 });
 it("does not leak a saved report into another thread while its snapshot is loading", async () => {

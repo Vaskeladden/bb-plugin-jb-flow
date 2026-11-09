@@ -27,6 +27,7 @@ import {
   SCOPE_LABEL,
   SCOPE_PREFIX,
   ago,
+  currentPlatform,
   home,
   matchesShortcut,
   parseQuery,
@@ -82,13 +83,6 @@ function writeJson(key: string, value: unknown) {
   } catch {
     /* The palette works without persistence. */
   }
-}
-
-export function currentPlatform(): Platform {
-  const nav = navigator as Navigator & { userAgentData?: { platform?: string } };
-  const name = (nav.userAgentData?.platform || nav.platform || nav.userAgent || "").toLowerCase();
-  if (name.includes("mac") || name.includes("iphone") || name.includes("ipad")) return "mac";
-  return name.includes("win") ? "windows" : "linux";
 }
 
 const errorText = (cause: unknown) => (cause instanceof Error ? cause.message : String(cause));
