@@ -1560,10 +1560,12 @@ function TriageThreadList({
       };
     }
 
-    // A smart filter keeps your sections and shows only the matching threads in
-    // each (fork: stable-created-order). "Ready" keeps a flat list so Archive all
-    // still has one place to act on.
-    if (smart !== null && smart !== "ready") {
+    // A smart filter keeps every one of your sections, in your order, and shows
+    // only the matching threads in each; a section with none stays as an empty
+    // heading, so sections never disappear. Unfiled threads go first. Ready
+    // also offers Archive on the threads that qualify (unfiled, settled, quiet;
+    // never the open thread).
+    if (smart !== null) {
       const entry = SMART.find((candidate) => candidate.id === smart)!;
       const members = awake;
       const inSection = (key: string, thread: PluginSidebarThread) => sectionKey(thread.sectionId) === key;
@@ -1572,44 +1574,28 @@ function TriageThreadList({
         const lane = lanes.find((candidate) => sectionKey(candidate.sectionId) === key);
         const section = lane ? null : otherSections.find((candidate) => candidate.id === key);
         if (!lane && !section) continue;
-        const threadsHere = members.filter((thread) => inSection(key, thread));
-        if (threadsHere.length === 0) continue;
         filtered.push({
           id: lane ? `lane:${lane.id}` : `section:${section!.id}`,
           title: lane ? lane.title : section!.name,
-          threads: threadsHere,
+          threads: members.filter((thread) => inSection(key, thread)),
           section: lane ? { id: lane.sectionId, name: lane.title, isLane: true } : { id: section!.id, name: section!.name, isLane: false },
         });
       }
       const placed = new Set(filtered.flatMap((group) => group.threads.map((thread) => thread.id)));
       const loose = members.filter((thread) => !placed.has(thread.id));
-      if (loose.length > 0) filtered.unshift({ id: `smart:${smart}`, title: entry.label, threads: loose, dynamic: { glyph: entry.glyph, tone: entry.tone } });
+      const archivable = smart === "ready" ? members.filter((thread) => finishedRoots.has(thread.id)) : [];
+      if (loose.length > 0 || archivable.length > 0)
+        filtered.unshift({
+          id: `smart:${smart}`,
+          title: entry.label,
+          threads: loose,
+          dynamic: { glyph: entry.glyph, tone: entry.tone },
+          action:
+            archivable.length > 0
+              ? { label: archivable.length === members.length ? "Archive all" : `Archive ${archivable.length} settled`, run: () => void rpc.call("archive", { threadIds: archivable.map((thread) => thread.id) }) }
+              : undefined,
+        });
       return { smartCounts, machineCounts, groups: filtered, treeNodes };
-    }
-
-    // Ready: green PRs to ship first, then finished threads with Archive all
-    // (only those that qualify: unfiled, settled, quiet; never the open thread).
-    if (smart !== null) {
-      const toShip = awake.filter((thread) => openPrs(thread).some((pr) => pr.attention === "ready_to_merge"));
-      const rest = awake.filter((thread) => !toShip.includes(thread));
-      const archivable = rest.filter((thread) => finishedRoots.has(thread.id));
-      const groups: Group[] = [];
-      if (toShip.length > 0)
-        groups.push({ id: "smart:ready-ship", title: "Ready to ship", threads: toShip, dynamic: { glyph: "pr", tone: "text-green-500" } });
-      groups.push({
-        id: "smart:ready",
-        title: toShip.length > 0 ? "Finished" : THREAD_STATE_LABEL.ready,
-        threads: rest,
-        dynamic: { glyph: "check", tone: "text-green-500" },
-        action:
-          archivable.length > 0
-            ? {
-                label: archivable.length === rest.length ? "Archive all" : `Archive ${archivable.length} settled`,
-                run: () => void rpc.call("archive", { threadIds: archivable.map((thread) => thread.id) }),
-              }
-            : undefined,
-      });
-      return { treeNodes, smartCounts, machineCounts, groups };
     }
 
     // Waiting on someone else: the agent said so, or every open PR waits on a reviewer.

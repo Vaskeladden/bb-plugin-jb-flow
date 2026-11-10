@@ -138,3 +138,19 @@ it("still offers Archive all under Ready for an idle family whose PRs are settle
   expect(slot.getByRole("button", { name: "Archive all" })).toBeTruthy();
   expect(document.querySelector('[data-sidebar-thread-id="child"]')).toBeTruthy();
 });
+
+it("keeps every section under a state filter, even one with no matching threads", async () => {
+  // 10 Nov 2026: filtering on Ready dropped the sections into one flat list.
+  const rows = [
+    thread("filed", null, { sectionId: "bugs", updatedAt: Date.now() - 86_400_000 }),
+    thread("loose", null, { sectionId: null, status: "active" }),
+  ];
+  const slot = await sidebar(null, rows);
+  fireEvent.click(await slot.findByRole("button", { name: /^Ready/ }));
+  await waitFor(() => expect(document.querySelector('[data-sidebar-thread-id="filed"]')).toBeTruthy());
+  expect(slot.getAllByText("Bugs").length).toBeGreaterThan(0);
+  fireEvent.click(await slot.findByRole("button", { name: /^Running/ }));
+  await waitFor(() => expect(document.querySelector('[data-sidebar-thread-id="loose"]')).toBeTruthy());
+  // Bugs has no running thread, and its heading stays.
+  expect(slot.getAllByText("Bugs").length).toBeGreaterThan(0);
+});
