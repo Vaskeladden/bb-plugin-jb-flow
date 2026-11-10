@@ -22,8 +22,8 @@ export const THREAD_STATE_STYLE: Record<ThreadStateId, { glyph: "spinner" | "que
   needs: { glyph: "question", tone: "text-amber-500" },
   autopilot: { glyph: "hourglass", tone: "text-pink-500" },
   ready: { glyph: "check", tone: "text-green-500" },
-  // Purple: all work finished and landed, nothing left to commit or merge.
-  done: { glyph: "check", tone: "text-violet-500" },
+  // bb's own «Merged» purple: all work finished and landed, nothing left to commit or merge.
+  done: { glyph: "check", tone: "text-[var(--pr-merged,#8b5cf6)]" },
   parked: { glyph: "pause", tone: "text-muted-foreground" },
 };
 

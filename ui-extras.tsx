@@ -39,7 +39,7 @@ export const PR_TONE: Record<string, string> = {
   checks_pending: "text-amber-500",
   review_requested: "text-sky-500",
   ready_to_merge: "text-green-500",
-  merged: "text-violet-500",
+  merged: "text-[var(--pr-merged,#8b5cf6)]",
   draft: "text-muted-foreground",
   closed: "text-muted-foreground",
   none: "text-muted-foreground",
