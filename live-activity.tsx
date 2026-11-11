@@ -649,6 +649,17 @@ export function ActivityCard({
             {elapsed(now - startedAt)}
           </time>
         )}
+        {!running && onArchive && archiveTone && (
+          <button
+            type="button"
+            className={archiveTone === "done" ? "jf-monitor-update" : "jf-monitor-update jf-monitor-update-quiet"}
+            style={archiveTone === "done" ? { background: "var(--pr-merged, #8b5cf6)", color: "white" } : undefined}
+            onClick={() => void onArchive().catch(() => {})}
+            title={archiveTone === "done" ? "All work is done and merged: archive this thread" : "Nothing left for the agent: archive this thread"}
+          >
+            Archive
+          </button>
+        )}
         {canRequest && (
           <button
             type="button"
@@ -691,17 +702,6 @@ export function ActivityCard({
             title={parked ? "Bring the thread back into Needs me, Autopilot or Ready" : "Put the thread aside: it leaves Needs me and the other lists until it runs again"}
           >
             {parked ? "Unpark" : "Park"}
-          </button>
-        )}
-        {!running && onArchive && archiveTone && (
-          <button
-            type="button"
-            className={archiveTone === "done" ? "jf-monitor-update" : "jf-monitor-update jf-monitor-update-quiet"}
-            style={archiveTone === "done" ? { background: "var(--pr-merged, #8b5cf6)", color: "white" } : undefined}
-            onClick={() => void onArchive().catch(() => {})}
-            title={archiveTone === "done" ? "All work is done and merged: archive this thread" : "Nothing left for the agent: archive this thread"}
-          >
-            Archive
           </button>
         )}
         {!collapsed && (
