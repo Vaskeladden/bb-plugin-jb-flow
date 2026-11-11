@@ -143,6 +143,8 @@ export const rpcContract = defineRpcContract({
       autoContinue: z.object({ enabled: z.boolean(), scheduledAt: z.number().nullable() }),
       watches: z.array(z.object({ kind: z.enum(["ci", "release"]), key: z.string(), label: z.string() })),
       parked: z.boolean().optional(),
+      /** The thread's one state, as the sidebar shows it (Archive shows for ready and done). */
+      state: z.string().nullable().optional(),
     }),
   },
   thread_move: {
@@ -876,6 +878,22 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
     bb.log.info(`moved ${threadId} from ${from ?? "none"} to ${sectionId ?? "none"} via ${via}`);
   }
 
+  /** One thread's state with the same facts the sidebar uses. */
+  async function stateOfThread(threadId: string): Promise<string | null> {
+    const thread = await bb.sdk.threads.get({ threadId }).catch(() => null);
+    if (!thread) return null;
+    const [awaitingAll, watching, promised, waitingOthers, parked, clean, threadPrs] = await Promise.all([
+      awaiting.all(),
+      watchingByThread(),
+      awaiting.promised(),
+      awaiting.waitingOthers(),
+      awaiting.parked(),
+      gitClean.all(),
+      prTracker.byThread(),
+    ]);
+    return threadState(thread, { awaiting: awaitingAll, watching, promised, waitingOthers, parked, clean, threadPrs }).state;
+  }
+
   let stateBuild: Promise<FlowState> | null = null;
   async function buildState(): Promise<FlowState> {
     return {
@@ -918,6 +936,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
       },
       watches: await watchers.wakeupsFor(threadId),
       parked: threadId in (await awaiting.parked()),
+      state: await stateOfThread(threadId),
     }),
     thread_move: async ({ threadId, sectionId, via }) => {
       await moveThread(threadId, sectionId, via);

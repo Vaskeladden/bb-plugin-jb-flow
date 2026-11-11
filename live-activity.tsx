@@ -504,6 +504,8 @@ export function ActivityCard({
   onRequestRevise,
   parked,
   onTogglePark,
+  archiveTone,
+  onArchive,
   autoContinue,
   onToggleAutoContinue,
   watches = [],
@@ -527,6 +529,9 @@ export function ActivityCard({
   /** Parked by you: out of Needs me and the other lists until it runs again (undefined while loading). */
   parked?: boolean;
   onTogglePark?: (parked: boolean) => Promise<void>;
+  /** Shown for a Ready thread, and highlighted for a Done one: archiving is one tap, also on a phone. */
+  archiveTone?: "ready" | "done";
+  onArchive?: () => Promise<void>;
   data: ActivityData;
   running: boolean;
   startedAt: number | null;
@@ -686,6 +691,17 @@ export function ActivityCard({
             title={parked ? "Bring the thread back into Needs me, Autopilot or Ready" : "Put the thread aside: it leaves Needs me and the other lists until it runs again"}
           >
             {parked ? "Unpark" : "Park"}
+          </button>
+        )}
+        {!running && onArchive && archiveTone && (
+          <button
+            type="button"
+            className={archiveTone === "done" ? "jf-monitor-update" : "jf-monitor-update jf-monitor-update-quiet"}
+            style={archiveTone === "done" ? { background: "var(--pr-merged, #8b5cf6)", color: "white" } : undefined}
+            onClick={() => void onArchive().catch(() => {})}
+            title={archiveTone === "done" ? "All work is done and merged: archive this thread" : "Nothing left for the agent: archive this thread"}
+          >
+            Archive
           </button>
         )}
         {!collapsed && (
@@ -1038,6 +1054,7 @@ type Wakeups = {
   autoContinue: { enabled: boolean; scheduledAt: number | null };
   watches: { kind: "ci" | "release"; key: string; label: string }[];
   parked?: boolean;
+  state?: string | null;
 };
 
 /** What will wake this thread (auto-continue, CI/review watches, release waits), kept in step with the server. */
@@ -1160,6 +1177,10 @@ export function LiveActivityBanner({
       }}
       parked={wakeups.state ? (wakeups.state.parked ?? false) : undefined}
       onTogglePark={wakeups.park}
+      archiveTone={wakeups.state?.state === "done" ? "done" : wakeups.state?.state === "ready" ? "ready" : undefined}
+      onArchive={async () => {
+        await sdk.threads.archive({ threadId });
+      }}
       running={running}
       startedAt={runningSince[threadId]?.since ?? taskStart}
       now={now}
