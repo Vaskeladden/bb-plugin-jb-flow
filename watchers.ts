@@ -16,13 +16,13 @@
 //   working is left alone; its news arrives as one message once it goes idle.
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
-import { CI_TIMEOUT_MS, runIdOf, stepCiWatch, type CiWatch } from "./ci-watch";
-import { GH_MISSING, pausedText, QuotaPausedError, type Reads } from "./github";
-import type { LightItem, RunItem } from "./hub-model";
-import { parseLimitHit } from "./limits";
-import type { Hub, HubView } from "./pr-hub";
-import { RELEASE_WAIT } from "./release-wait";
-import { parseRunRef, runOutcome } from "./runs";
+import { CI_TIMEOUT_MS, logTargetOf, stepCiWatch, type CiWatch } from "./ci-watch.ts";
+import { GH_MISSING, pausedText, QuotaPausedError, type Reads } from "./github.ts";
+import { prKey, runKey, type LightItem, type RunItem } from "./hub-model.ts";
+import { parseLimitHit } from "./limits.ts";
+import type { Hub, HubView } from "./pr-hub.ts";
+import { RELEASE_WAIT } from "./release-wait.ts";
+import { parseRunRef, runOutcome } from "./runs.ts";
 
 export const releaseWatchSchema = z.object({
   /** owner/name; defaults to the project's GitHub remote. */
@@ -337,18 +337,19 @@ export function createWatchers(
         ? await bb.sdk.environments.get({ environmentId: thread.environmentId })
         : null;
       if (!environment?.branchName) throw new Error("No PR number given and the thread has no branch.");
+      // The open PR, else the branch's newest (a merged branch is refused below as "already merged").
       // While the hub is paused this throws its "Paused: GitHub quota low…" text.
-      const found = await reads.openPrForBranch(slug, environment.branchName).catch((error: Error) => {
+      const found = await reads.prForBranch(slug, environment.branchName).catch((error: Error) => {
         if (error instanceof QuotaPausedError || error.message === GH_MISSING) throw error;
         return null;
       });
       if (found === null) throw new Error(`No open PR for branch ${environment.branchName}.`);
-      pr = found;
+      pr = found.number;
     }
     // Refuse closed/merged PRs up front: a wrong repo guess (same number, other
     // repo) shows up here instead of as a bogus "merged" notice later. While the
-    // hub is paused the watch is kept unchecked; its first read reports a merged
-    // or closed PR.
+    // hub is paused the watch is kept unchecked; its first read reports a PR that
+    // is merged, closed, or doesn't exist.
     const current = await reads.prSummary(slug, pr).catch((error: Error) => {
       if (error instanceof QuotaPausedError) return "paused" as const;
       throw error;
@@ -369,8 +370,8 @@ export function createWatchers(
   }
 
   async function failedLog(url: string | null, repo: string): Promise<string> {
-    const runId = runIdOf(url);
-    return runId ? reads.failedLog(repo, Number(runId)) : "";
+    const target = logTargetOf(url);
+    return target ? reads.failedLog(repo, target) : "\n(Log not available: the failed check does not link to an Actions job.)";
   }
 
   /** After each hub cycle: what each CI watch says, from PRs read in that cycle only. */
@@ -393,10 +394,17 @@ export function createWatchers(
       const light = view.pr(watch.repo, watch.pr);
       const verdict = view.verdict(watch.repo, watch.pr);
       if (!light || !verdict) {
-        // Not read this cycle. Paused: nothing to say. A PR GitHub keeps refusing
-        // (gone, no access) is dropped after the usual timeout instead of
-        // warning every cycle forever.
-        if (view.failed.has(`${watch.repo}#${watch.pr}`)) {
+        // Not read this cycle. Paused: nothing to say. GitHub answered without
+        // it: the PR is gone or out of reach (or never existed, for a watch
+        // registered while paused), so say so and stop. A read error: try again
+        // next cycle, and give up silently after the usual timeout.
+        if (view.missing.has(prKey(watch.repo, watch.pr))) {
+          const entry = outbox.get(watch.threadId) ?? { notes: [], stillWatching: false };
+          entry.notes.push(`${watch.repo}#${watch.pr} doesn't exist or isn't accessible; stopped watching. If you meant a PR in another repo, pass repo (owner/name).`);
+          outbox.set(watch.threadId, entry);
+          delete watches[key];
+          removed.add(key);
+        } else if (view.unreadable.has(prKey(watch.repo, watch.pr))) {
           if (Date.now() - watch.since > CI_TIMEOUT_MS) {
             delete watches[key];
             removed.add(key);
@@ -482,15 +490,18 @@ export function createWatchers(
       let text: string | null = null;
       if (run) {
         const outcome = runOutcome(
-          { status: run.status, conclusion: run.conclusion, name: watch.label, ...(watch.displayTitle ? { displayTitle: watch.displayTitle } : {}), url: run.url, jobs: run.failedJobs },
+          { status: run.status, conclusion: run.conclusion, name: watch.label, ...(watch.displayTitle ? { displayTitle: watch.displayTitle } : {}), url: run.url, jobs: run.failedJobs, jobsMore: run.failedMore },
           watch.repo,
         );
         if (outcome) {
-          text = outcome.text + (outcome.failed ? await reads.failedLog(watch.repo, watch.runId) : "");
+          text = outcome.text + (outcome.failed ? await reads.failedLog(watch.repo, { runId: watch.runId }) : "");
         } else if (Date.now() - watch.since > RUN_TIMEOUT_MS) {
           text = `${watch.label} in ${watch.repo.split("/")[1]} is still ${run.status} after 12 hours; stopped watching. ${run.url}`;
         }
-      } else if (!view.quota.paused && view.cycleAt > 0 && Date.now() - watch.since > RUN_TIMEOUT_MS) {
+      } else if (view.missing.has(runKey(watch.repo, watch.runId))) {
+        // Gone or out of reach (or never existed, for a watch registered while paused).
+        text = `Run ${watch.runId} in ${watch.repo} doesn't exist or isn't accessible; stopped watching.`;
+      } else if (view.unreadable.has(runKey(watch.repo, watch.runId)) && Date.now() - watch.since > RUN_TIMEOUT_MS) {
         text = `Stopped watching run ${watch.runId} in ${watch.repo}: GitHub did not return it for 12 hours.`;
       }
       if (text === null) continue;

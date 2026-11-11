@@ -2,30 +2,34 @@
 // follows (CI watches, run watches, the PRs threads created), instead of one
 // read per watch, per thread or per page of checks.
 //
-// Each cycle sends one light query across all repos (state, check counts per
-// state, and recent reviews/comments only where someone waits for them):
-// about 1 point, whatever the number of PRs or checks. A PR's failed checks and
-// required checks are read only when its counts say it is needed
-// (hub-model.ts `detailNeeded`), about 1 point per few PRs. The cycle runs
-// every minute while a CI or run watch is open, else every third minute.
+// Each cycle sends one light query per 60 PRs and 60 runs, across repos
+// (state, check counts per state, and recent reviews/comments only where
+// someone waits for them): about 1 point. A PR's failed checks and required
+// checks are read only when its counts say it is needed (hub-model.ts
+// `detailNeeded`), about 1 point per few PRs. A cycle starts at most once a
+// minute while a CI or run watch is open, else every third minute; an early
+// cycle (`soon`) takes the place of a scheduled one, so nothing reads more
+// often than once a minute.
 //
 // Below the quota floor, or after GitHub refuses a request for rate limits,
-// the hub reads nothing until the counter resets (github.ts). Watchers only
-// act on PRs read in the current cycle, so nothing is reported from a read
-// that was not made.
+// the hub reads nothing until the counter resets (github.ts). A CI verdict
+// comes only from this cycle's reads (hub-model.ts `checksVerdict`), so
+// nothing is reported from a read that was not made.
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
-import { QuotaPausedError, RateLimitedError, type GitHub, type Reads, type QuotaState } from "./github.ts";
+import { QuotaPausedError, RateLimitedError, type GitHub, type QuotaState, type Reads } from "./github.ts";
 import {
+  attentionOf,
   checksVerdict,
   DETAIL_BATCH,
   detailNeeded,
   detailQuery,
-  LIGHT_BATCH,
+  lightBatches,
   lightQuery,
   prKey,
   readDetail,
   readLight,
-  type Counts,
+  runKey,
+  type Attention,
   type LightAnswer,
   type LightItem,
   type PrDetail,
@@ -51,157 +55,219 @@ export type HubView = {
   quota: QuotaState;
   /** A PR read in this cycle; undefined when it wasn't (paused, error, gone). */
   pr(repo: string, number: number): PrLight | undefined;
+  /** A CI watch's verdict, from this cycle's reads only; undefined when the PR wasn't read. */
   verdict(repo: string, number: number): Verdict | undefined;
-  /** The first blocking failure's run, for its log. */
+  /** The sidebar state of a PR read this cycle (may use an earlier detail read of the same head). */
+  attention(repo: string, number: number): Attention | undefined;
+  /** A run read in this cycle. */
   run(repo: string, runId: number): RunLight | undefined;
-  /** PRs this cycle tried and could not read (not counting a pause). */
-  failed: Set<PrKey>;
+  /** PRs and runs GitHub answered without (deleted, no access), by prKey / runKey. */
+  missing: Set<string>;
+  /** PRs and runs whose query failed this cycle (not a pause), by prKey / runKey. */
+  unreadable: Set<string>;
   login: string | null;
 };
 
 const REQUIRED_TTL_MS = 60 * 60_000;
-/** An early cycle (refresh, a new PR) at most this often. */
-const SOON_GAP_MS = 20_000;
+/** Cycles start at most this often, scheduled or early. */
+const MIN_GAP_MS = 60_000;
+const IDLE_GAP_MS = 3 * 60_000;
+const TICK_MS = 10_000;
+
+const rateLimited = (error: unknown) => error instanceof RateLimitedError || error instanceof QuotaPausedError;
 
 export function createHub(bb: BbPluginApi, github: GitHub, reads: Reads, interest: () => Promise<Interest>) {
   const lights = new Map<PrKey, PrLight>();
-  const details = new Map<PrKey, PrDetail>();
-  const lastCounts = new Map<PrKey, Counts | null>();
-  const required = new Map<string, { names: string[] | null; at: number }>();
+  /** The last detail read of each PR, any cycle: for `detailNeeded` and the sidebar, never for a verdict. */
+  const details = new Map<PrKey, { detail: PrDetail; required: string[] | null }>();
+  /** Required checks per "repo:base"; only answers are kept, an unknown is asked again at the next detail read. */
+  const required = new Map<string, { names: string[]; at: number }>();
   const listeners: Array<(view: HubView) => Promise<void>> = [];
   let login: string | null = null;
   let lastCycleAt = 0;
-  let running: Promise<HubView> | null = null;
+  let running: Promise<HubView | null> | null = null;
+  /** Aborted when the plugin reloads or stops: a running cycle stops between queries and tells no one. */
+  let signal: AbortSignal | null = null;
+  const stopped = () => signal?.aborted === true;
 
   async function requiredFor(repo: string, base: string): Promise<string[] | null> {
     const key = `${repo}:${base}`;
     const cached = required.get(key);
     if (cached && Date.now() - cached.at < REQUIRED_TTL_MS) return cached.names;
-    const names = await reads.requiredChecks(repo, base);
-    required.set(key, { names, at: Date.now() });
+    const names = await reads.requiredChecks(repo, base).catch((error: unknown) => {
+      if (rateLimited(error)) throw error;
+      bb.log.warn(`github hub: rules of ${key}: ${String(error)}`);
+      return null;
+    });
+    if (names !== null) required.set(key, { names, at: Date.now() });
     return names;
   }
 
-  const verdictOf = (light: PrLight) => checksVerdict(light, details.get(prKey(light.repo, light.number)), required.get(`${light.repo}:${light.base}`)?.names ?? null);
+  type Cycle = { at: number; fresh: Set<PrKey>; details: Map<PrKey, PrDetail>; runs: Map<string, RunLight>; missing: Set<string>; unreadable: Set<string> };
 
-  async function readLights(wanted: Interest, cycleAt: number, fresh: Set<PrKey>, failed: Set<PrKey>, runs: Map<string, RunLight>) {
-    const prs = wanted.prs;
-    const batches = Math.max(1, Math.ceil(prs.length / LIGHT_BATCH));
-    for (let b = 0; b < batches; b += 1) {
-      const items = prs.slice(b * LIGHT_BATCH, (b + 1) * LIGHT_BATCH);
-      const runItems = b === 0 ? wanted.runs : [];
-      if (items.length + runItems.length === 0) continue;
+  async function readLights(wanted: Interest, cycle: Cycle) {
+    for (const batch of lightBatches(wanted.prs, wanted.runs)) {
+      if (stopped()) return;
       try {
-        const { data, errors } = await github.graphql<LightAnswer>(lightQuery(items, runItems), "watched PRs");
+        const { data, errors } = await github.graphql<LightAnswer>(lightQuery(batch.prs, batch.runs), "watched PRs");
         if (errors.length > 0) bb.log.warn(`github hub: ${errors.slice(0, 3).join("; ")}`);
-        const answer = readLight(data, items, runItems, cycleAt);
+        // A deleted repo or PR comes back as null next to a "Could not resolve"
+        // error; the rest of the batch still reads. Any other error leaves the
+        // absent ones unread, not gone.
+        const answer = readLight(data, batch.prs, batch.runs, cycle.at);
+        const absent = errors.every((message) => /could not resolve/i.test(message)) ? cycle.missing : cycle.unreadable;
         login = answer.login ?? login;
-        for (const item of items) {
+        for (const item of batch.prs) {
           const key = prKey(item.repo, item.number);
           const light = answer.prs.get(key);
           if (light) {
             lights.set(key, light);
-            fresh.add(key);
-          } else failed.add(key);
+            cycle.fresh.add(key);
+          } else absent.add(key);
         }
-        for (const [key, run] of answer.runs) runs.set(key, run);
+        for (const item of batch.runs) {
+          const key = runKey(item.repo, item.runId);
+          const run = answer.runs.get(key);
+          if (run) cycle.runs.set(key, run);
+          else absent.add(key);
+        }
       } catch (error) {
-        if (error instanceof RateLimitedError || error instanceof QuotaPausedError) throw error;
+        if (rateLimited(error)) throw error;
         bb.log.warn(`github hub: ${String(error)}`);
-        for (const item of items) failed.add(prKey(item.repo, item.number));
+        for (const item of batch.prs) cycle.unreadable.add(prKey(item.repo, item.number));
+        for (const item of batch.runs) cycle.unreadable.add(runKey(item.repo, item.runId));
       }
     }
   }
 
-  async function readDetails(wanted: Interest, fresh: Set<PrKey>, cycleAt: number) {
+  async function readDetails(wanted: Interest, cycle: Cycle) {
     const watched = new Set(wanted.prs.filter((pr) => pr.watched).map((pr) => prKey(pr.repo, pr.number)));
     const due = new Map<string, number[]>(); // "repo base" -> numbers
-    for (const key of fresh) {
+    for (const key of cycle.fresh) {
       const light = lights.get(key)!;
-      if (light.state !== "OPEN" || !light.counts) continue;
-      // Required checks are only needed to explain failures or to finish a watch.
-      const needsRules = light.counts.failed > 0 || watched.has(key);
-      const names = needsRules ? await requiredFor(light.repo, light.base) : (required.get(`${light.repo}:${light.base}`)?.names ?? null);
-      if (detailNeeded(light, details.get(key), names, watched.has(key), cycleAt, lastCounts.get(key) ?? null)) {
-        const group = `${light.repo} ${light.base}`;
-        due.set(group, [...(due.get(group) ?? []), light.number]);
-      }
+      if (!detailNeeded(light, details.get(key)?.detail, watched.has(key), cycle.at)) continue;
+      const group = `${light.repo} ${light.base}`;
+      due.set(group, [...(due.get(group) ?? []), light.number]);
     }
     for (const [group, numbers] of due) {
       const [repo, base] = group.split(" ") as [string, string];
-      const names = required.get(`${repo}:${base}`)?.names ?? null;
+      if (stopped()) return;
+      const names = await requiredFor(repo, base);
       for (let i = 0; i < numbers.length; i += DETAIL_BATCH) {
+        if (stopped()) return;
         const batch = numbers.slice(i, i + DETAIL_BATCH);
         try {
           const { data } = await github.graphql<{ r?: Record<string, unknown> | null }>(detailQuery(repo, batch, names ?? []), `checks of ${repo}`);
           for (const number of batch) {
             const key = prKey(repo, number);
-            const detail = readDetail(data.r?.[`d${number}`] as Parameters<typeof readDetail>[0], names, lights.get(key)!, cycleAt);
-            if (detail) details.set(key, detail);
+            // Null when a push landed between the light read and this one: the PR stays pending.
+            const detail = readDetail(data.r?.[`d${number}`] as Parameters<typeof readDetail>[0], names ?? [], lights.get(key)!, cycle.at);
+            if (!detail) continue;
+            details.set(key, { detail, required: names });
+            cycle.details.set(key, detail);
           }
         } catch (error) {
-          if (error instanceof RateLimitedError || error instanceof QuotaPausedError) throw error;
+          if (rateLimited(error)) throw error;
           bb.log.warn(`github hub: checks of ${repo}: ${String(error)}`);
         }
       }
     }
   }
 
-  async function cycleNow(): Promise<HubView> {
-    const cycleAt = Date.now();
-    lastCycleAt = cycleAt;
-    const fresh = new Set<PrKey>();
-    const failed = new Set<PrKey>();
-    const runs = new Map<string, RunLight>();
+  /** Forgets PRs nobody follows any more, and details of PRs that closed. */
+  function prune(wanted: Interest) {
+    const followed = new Set(wanted.prs.map((pr) => prKey(pr.repo, pr.number)));
+    for (const key of [...lights.keys()]) if (!followed.has(key)) lights.delete(key);
+    for (const key of [...details.keys()]) if (lights.get(key)?.state !== "OPEN") details.delete(key);
+  }
+
+  async function cycleNow(): Promise<HubView | null> {
+    const cycle: Cycle = { at: Date.now(), fresh: new Set(), details: new Map(), runs: new Map(), missing: new Set(), unreadable: new Set() };
+    lastCycleAt = cycle.at;
     if (!github.quota.state().paused) {
       const wanted = await interest();
       try {
-        await readLights(wanted, cycleAt, fresh, failed, runs);
-        await readDetails(wanted, fresh, cycleAt);
+        await readLights(wanted, cycle);
+        await readDetails(wanted, cycle);
       } catch (error) {
-        // Paused or refused: stop reading; what was read before the refusal still counts.
+        if (!rateLimited(error)) throw error;
+        // Paused or refused mid-cycle: stop reading. PRs whose detail was not read stay pending.
         bb.log.warn(`github hub: ${String(error)}`);
       }
-      for (const key of fresh) lastCounts.set(key, lights.get(key)!.counts);
-      for (const key of [...details.keys()]) if (lights.get(key)?.state !== "OPEN") details.delete(key);
+      prune(wanted);
     }
+    if (stopped()) return null;
+    const fresh = (repo: string, number: number) => (cycle.fresh.has(prKey(repo, number)) ? lights.get(prKey(repo, number)) : undefined);
     const view: HubView = {
-      cycleAt,
+      cycleAt: cycle.at,
       quota: github.quota.state(),
-      pr: (repo, number) => (fresh.has(prKey(repo, number)) ? lights.get(prKey(repo, number)) : undefined),
+      pr: fresh,
       verdict: (repo, number) => {
-        const light = fresh.has(prKey(repo, number)) ? lights.get(prKey(repo, number)) : undefined;
-        return light ? verdictOf(light) : undefined;
+        const light = fresh(repo, number);
+        if (!light) return undefined;
+        const key = prKey(repo, number);
+        return checksVerdict(light, cycle.details.get(key), details.get(key)?.required ?? null);
       },
-      run: (repo, runId) => runs.get(`${repo}/runs/${runId}`),
-      failed,
+      attention: (repo, number) => {
+        const light = fresh(repo, number);
+        const last = details.get(prKey(repo, number));
+        return light ? attentionOf(light, last?.detail, last?.required ?? null) : undefined;
+      },
+      run: (repo, runId) => cycle.runs.get(runKey(repo, runId)),
+      missing: cycle.missing,
+      unreadable: cycle.unreadable,
       login,
     };
-    for (const listener of listeners) await listener(view).catch((error) => bb.log.warn(`github hub listener: ${String(error)}`));
+    for (const listener of listeners) {
+      if (stopped()) break;
+      await listener(view).catch((error) => bb.log.warn(`github hub listener: ${String(error)}`));
+    }
     return view;
   }
 
-  /** One cycle at a time; callers during a cycle share it. */
-  function cycle(): Promise<HubView> {
+  /** One cycle at a time; callers during a cycle share it. Null when the plugin stopped meanwhile. */
+  function cycle(): Promise<HubView | null> {
     running ??= cycleNow().finally(() => (running = null));
     return running;
   }
 
-  /** A cycle now, unless one ran in the last 20 s (then that one's results stand). */
+  /**
+   * A cycle now (`refresh: true`, a new PR), unless one started in the last
+   * minute: then that one's results stand. It takes the place of the next
+   * scheduled cycle, which waits a minute from this one.
+   */
   async function soon(): Promise<void> {
     if (running) {
       await running;
       return;
     }
-    if (Date.now() - lastCycleAt < SOON_GAP_MS) return;
+    if (Date.now() - lastCycleAt < MIN_GAP_MS) return;
     await cycle();
   }
 
-  bb.background.schedule("github-hub", "* * * * *", async () => {
+  async function tick() {
     const wanted = await interest();
     if (wanted.prs.length + wanted.runs.length === 0) return;
-    if (!wanted.urgent && new Date().getMinutes() % 3 !== 0) return;
+    if (running || Date.now() - lastCycleAt < (wanted.urgent ? MIN_GAP_MS : IDLE_GAP_MS)) return;
     await cycle();
+  }
+
+  bb.background.service("github-hub", {
+    async start(stop) {
+      signal = stop;
+      while (!stop.aborted) {
+        await tick().catch((error) => bb.log.warn(`github hub: ${String(error)}`));
+        await new Promise<void>((resolve) => {
+          const done = () => {
+            clearTimeout(timer);
+            stop.removeEventListener("abort", done);
+            resolve();
+          };
+          const timer = setTimeout(done, TICK_MS);
+          stop.addEventListener("abort", done, { once: true });
+        });
+      }
+    },
   });
 
   return {
@@ -210,11 +276,6 @@ export function createHub(bb: BbPluginApi, github: GitHub, reads: Reads, interes
     /** Called after every cycle, in registration order. */
     onCycle(listener: (view: HubView) => Promise<void>) {
       listeners.push(listener);
-    },
-    /** The last read of a PR and what its checks mean (any cycle). */
-    last(repo: string, number: number): { light: PrLight; verdict: Verdict } | undefined {
-      const light = lights.get(prKey(repo, number));
-      return light ? { light, verdict: verdictOf(light) } : undefined;
     },
     quota: () => github.quota.state(),
     readings: () => github.quota.readings(),

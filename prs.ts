@@ -8,8 +8,8 @@
 // branches within a repo.
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
-import { attentionOf, type LightItem } from "./hub-model.ts";
-import type { Hub, HubView } from "./pr-hub";
+import type { LightItem } from "./hub-model.ts";
+import type { Hub, HubView } from "./pr-hub.ts";
 
 export const prAttention = z.enum([
   "merged",
@@ -269,15 +269,15 @@ export function createPrTracker(bb: BbPluginApi, changed: () => void, hub: Hub) 
     for (const prKey of linked) {
       const [repo, number] = prKey.split("#");
       const light = view.pr(repo!, Number(number));
-      const verdict = view.verdict(repo!, Number(number));
-      if (!light || !verdict) continue;
+      const attention = view.attention(repo!, Number(number));
+      if (!light || !attention) continue;
       status[prKey] = {
         repo: light.repo,
         number: light.number,
         title: light.title,
         url: light.url,
         state: light.state === "MERGED" ? "merged" : light.state === "CLOSED" ? "closed" : light.isDraft ? "draft" : "open",
-        attention: attentionOf(light, verdict),
+        attention,
         base: light.base,
         head: light.head,
         mergedAt: light.mergedAt,
@@ -292,7 +292,7 @@ export function createPrTracker(bb: BbPluginApi, changed: () => void, hub: Hub) 
   }
   hub.onCycle(apply);
 
-  /** A read of every linked PR now (at most every 20 s; the hub reads them every few minutes anyway). */
+  /** A read of every linked PR now (at most once a minute; the hub reads them every few minutes anyway). */
   async function refresh(): Promise<void> {
     await hub.soon();
   }

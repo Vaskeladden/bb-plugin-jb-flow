@@ -157,7 +157,7 @@ export function createGitHub(quota: Quota = createQuota(), runner: Runner = exec
 
   const restJson = async <T>(path: string, what: string): Promise<T> => JSON.parse(await gh(["api", path], what)) as T;
 
-  return { quota, gh, graphql, restJson, guard };
+  return { quota, gh, graphql, restJson };
 }
 export type GitHub = ReturnType<typeof createGitHub>;
 
@@ -165,6 +165,8 @@ export type GitHub = ReturnType<typeof createGitHub>;
 // One function per question, so no other file builds gh commands.
 
 const RATE = "rateLimit { remaining resetAt }";
+// eslint-disable-next-line no-control-regex
+const ANSI = /\x1b\[[0-9;]*[A-Za-z]/g;
 const repoArgs = (repo: string) => {
   const [owner, name] = repo.split("/");
   return `owner: ${JSON.stringify(owner)}, name: ${JSON.stringify(name)}`;
@@ -173,13 +175,18 @@ const repoArgs = (repo: string) => {
 export function createReads(github: GitHub) {
   const { gh, graphql, restJson } = github;
   return {
-    /** The open PR for a branch, if any. */
-    async openPrForBranch(repo: string, branch: string): Promise<number | null> {
-      const { data } = await graphql<{ repository: { pullRequests: { nodes: Array<{ number: number }> } } | null }>(
-        `query { ${RATE} repository(${repoArgs(repo)}) { pullRequests(headRefName: ${JSON.stringify(branch)}, states: OPEN, first: 1, orderBy: {field: CREATED_AT, direction: DESC}) { nodes { number } } } }`,
-        `the PR for ${branch}`,
+    /**
+     * The PR of a branch: the newest open one, else the newest in any state
+     * (so a merged branch says "already merged"); null when it never had one.
+     */
+    async prForBranch(repo: string, branch: string): Promise<{ number: number; state: string } | null> {
+      type Nodes = { nodes: Array<{ number: number; state: string }> };
+      const head = `headRefName: ${JSON.stringify(branch)}, first: 1, orderBy: {field: CREATED_AT, direction: DESC}`;
+      const { data } = await graphql<{ repository: { open: Nodes; any: Nodes } | null }>(
+        `query { ${RATE} repository(${repoArgs(repo)}) { open: pullRequests(${head}, states: OPEN) { nodes { number state } } any: pullRequests(${head}) { nodes { number state } } } }`,
+        `the PR of ${branch}`,
       );
-      return data.repository?.pullRequests.nodes[0]?.number ?? null;
+      return data.repository?.open.nodes[0] ?? data.repository?.any.nodes[0] ?? null;
     },
     /** State, title and age of one PR; null when it doesn't exist or isn't readable. */
     async prSummary(repo: string, pr: number): Promise<{ state: string; title: string; createdAt: string } | null> {
@@ -202,16 +209,40 @@ export function createReads(github: GitHub) {
       return run.status === undefined ? null : { status: run.status, conclusion: run.conclusion ?? null, name: run.name ?? "run", displayTitle: run.displayTitle, url: run.url ?? "" };
     },
     /** The last 60 lines of a run's failed jobs, as a fenced block ("" when there is nothing to show). */
-    async failedLog(repo: string, runId: number): Promise<string> {
-      const log = await gh(["run", "view", String(runId), "-R", repo, "--log-failed"], `the log of run ${runId}`).catch(() => "");
-      const lines = log.trim().split("\n").slice(-60).map((line) => line.replace(/^[^\t]*\t[^\t]*\t/, ""));
-      const text = lines.join("\n");
-      return lines.length > 1 ? `\n\`\`\`\n${text.length > 4000 ? `${text.slice(0, 4000)}…` : text}\n\`\`\`` : "";
+    /**
+     * The end of a failed job's log (up to its last error), or of a finished
+     * run's failed jobs, as a fenced block. A job's log is read through the
+     * REST job-log endpoint, which answers as soon as the job finished, while
+     * the rest of its run still goes (`gh run view --job --log-failed` refuses
+     * until the whole run completes; checked live on 11 Nov 2026). When there
+     * is no log, says why instead.
+     */
+    async failedLog(repo: string, target: { runId: number; jobId?: number | null }): Promise<string> {
+      let lines: string[];
+      try {
+        if (target.jobId) {
+          const log = await gh(["api", "--allow-escape-sequences", `repos/${repo}/actions/jobs/${target.jobId}/logs`], `the log of job ${target.jobId}`);
+          lines = log.split("\n").map((line) => line.replace(ANSI, "").replace(/^\d{4}-\d\d-\d\dT[\d:.]+Z ?/, ""));
+          let end = lines.length;
+          while (end > 0 && !lines[end - 1]!.startsWith("##[error]")) end -= 1;
+          if (end > 0) lines = lines.slice(0, end); // the post-job cleanup after the failure says nothing
+        } else {
+          const log = await gh(["run", "view", String(target.runId), "-R", repo, "--log-failed"], `the log of run ${target.runId}`);
+          lines = log.split("\n").map((line) => line.replace(/^[^\t]*\t[^\t]*\t/, ""));
+        }
+      } catch (error) {
+        return `\n(Log not available: ${String((error as Error).message).split("\n")[0]!.slice(0, 200)})`;
+      }
+      while (lines.length > 0 && !lines[lines.length - 1]!.trim()) lines.pop();
+      if (lines.length === 0) return "\n(Log not available: GitHub returned an empty log.)";
+      const text = lines.slice(-60).join("\n");
+      return `\n\`\`\`\n${text.length > 4000 ? `…${text.slice(-4000)}` : text}\n\`\`\``;
     },
     /** Check names a branch requires before merging (rulesets and classic protection); null when GitHub won't say. */
     async requiredChecks(repo: string, branch: string): Promise<string[] | null> {
+      // Both sources must answer: a failed rules read next to "no classic
+      // protection" would otherwise look like "nothing required".
       const names = new Set<string>();
-      let known = false;
       const rules = await restJson<Array<{ type: string; parameters?: { required_status_checks?: Array<{ context: string }> } }>>(
         `repos/${repo}/rules/branches/${encodeURIComponent(branch)}`,
         `the rules of ${repo}:${branch}`,
@@ -219,25 +250,22 @@ export function createReads(github: GitHub) {
         if (error instanceof RateLimitedError || error instanceof QuotaPausedError) throw error;
         return null;
       });
-      if (rules !== null) {
-        known = true;
-        for (const rule of rules) if (rule.type === "required_status_checks") for (const check of rule.parameters?.required_status_checks ?? []) names.add(check.context);
-      }
+      if (rules === null) return null;
+      for (const rule of rules) if (rule.type === "required_status_checks") for (const check of rule.parameters?.required_status_checks ?? []) names.add(check.context);
+      let unprotected = false;
       const classic = await restJson<{ contexts?: string[]; checks?: Array<{ context: string }> }>(
         `repos/${repo}/branches/${encodeURIComponent(branch)}/protection/required_status_checks`,
         `the protection of ${repo}:${branch}`,
       ).catch((error: Error) => {
         if (error instanceof RateLimitedError || error instanceof QuotaPausedError) throw error;
-        // 404: no classic protection (that is an answer); anything else: unknown.
-        if (/404|not protected|not found/i.test(error.message)) known = true;
+        // 404 ("Branch not protected", "Required status checks not enabled") is an answer: nothing required there.
+        if (/\b404\b|not protected|not enabled/i.test(error.message)) unprotected = true;
         return null;
       });
-      if (classic !== null) {
-        known = true;
-        for (const context of classic.contexts ?? []) names.add(context);
-        for (const check of classic.checks ?? []) names.add(check.context);
-      }
-      return known ? [...names].sort() : null;
+      if (classic === null && !unprotected) return null;
+      for (const context of classic?.contexts ?? []) names.add(context);
+      for (const check of classic?.checks ?? []) names.add(check.context);
+      return [...names].sort();
     },
     /** Merged PRs into a base, newest first (release watcher). */
     async mergedPrs(repo: string, base: string, limit: number): Promise<Array<{ number: number; title: string; mergedAt: string; mergeCommit: { oid: string } | null }>> {
@@ -258,11 +286,6 @@ export function createReads(github: GitHub) {
     /** PRs that contain a commit (git-clean). */
     async pullsForCommit(repo: string, sha: string): Promise<unknown> {
       return JSON.parse(await gh(["api", `repos/${repo}/commits/${sha}/pulls`], `PRs of ${sha.slice(0, 7)}`, 20_000));
-    },
-    /** The newest PR of a branch in any state (leftovers). */
-    async prForBranch(repo: string, branch: string): Promise<{ number: number; state: string } | null> {
-      const text = await gh(["pr", "list", "-R", repo, "--head", branch, "--state", "all", "--json", "number,state", "-q", ".[0]"], `the PR of ${branch}`, 30_000);
-      return text.trim() ? (JSON.parse(text) as { number: number; state: string }) : null;
     },
     /** A REST read for the unreleased page (repo, branches, releases, tags, compare, commits). */
     rest: <T>(path: string) => restJson<T>(path, path.split("?")[0]!),

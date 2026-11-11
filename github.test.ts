@@ -3,15 +3,58 @@ import { readdirSync, readFileSync } from "node:fs";
 import { test } from "node:test";
 import { createGitHub, createQuota, pausedText, QUOTA_FLOOR, QuotaPausedError, RateLimitedError, type Runner } from "./github.ts";
 
-// One owner: only github.ts may start gh or talk to the GitHub API.
+// One owner: only github.ts may start gh or talk to the GitHub API. Every
+// source file in the tree is read (tests and dependencies aside). A process
+// can only be started through node:child_process (or a wrapper such as execa
+// or zx), so only the files that run git may import it, and none of them may
+// name gh.
+const PROCESS_OWNERS = new Set(["github.ts", "git-clean.ts", "leftovers.ts"]);
+const SPAWNERS = [/["'`](node:)?child_process["'`]/, /["'`]execa["'`]/, /["'`]zx["'`]/, /\bBun\.spawn/, /\bDeno\.Command/, /process\.binding\(/];
+const NAMES_GH = [
+  /["'`]gh["'`]/, // "gh" as a command or a variable's value
+  /\/bin\/gh\b/,
+  /["'`]gh\s+(api|pr|run|repo|issue|release|search|auth|workflow)\b/, // a shell string
+  /\bgh(Bin|Path|Binary|Command|Cmd)\b/i,
+];
+const GITHUB_API = [/api\.github\.com/, /["'`]api["'`],\s*["'`]graphql["'`]/, /\bOctokit\b/, /@octokit\//];
+
+function sourceFiles(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const path = dir === "." ? entry.name : `${dir}/${entry.name}`;
+    if (entry.isDirectory()) return ["node_modules", "dist", ".git", ".bb-plugin"].includes(entry.name) ? [] : sourceFiles(path);
+    return /\.(ts|tsx|js|mjs|cjs|jsx)$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name) ? [path] : [];
+  });
+}
+
 test("no file but github.ts starts gh or calls the GitHub API", () => {
-  const forbidden = [/\/bin\/gh\b/, /execFile\(\s*["'`]gh["'`]/, /spawn\(\s*["'`]gh["'`]/, /api\.github\.com/, /["'`]api["'`],\s*["'`]graphql["'`]/, /\bghBin\b|\bghPath\b/];
-  const files = readdirSync(".").filter((name) => /\.(ts|tsx)$/.test(name) && !/\.test\.tsx?$/.test(name) && name !== "github.ts");
-  const offenders = files.flatMap((name) => {
-    const text = readFileSync(name, "utf8");
-    return forbidden.filter((pattern) => pattern.test(text)).map((pattern) => `${name}: ${pattern}`);
+  const files = sourceFiles(".");
+  assert.ok(files.includes("github.ts") && files.some((file) => file.startsWith("components/")), "walks the whole tree");
+  const offenders = files.flatMap((file) => {
+    if (file === "github.ts") return [];
+    const text = readFileSync(file, "utf8");
+    const code = text.replace(/^\s*\/\/.*$/gm, ""); // comments may mention gh
+    const found: string[] = [];
+    if (!PROCESS_OWNERS.has(file)) found.push(...SPAWNERS.filter((pattern) => pattern.test(code)).map((pattern) => `${file}: starts processes (${pattern})`));
+    // Messages to agents may quote gh commands; files that can start a process may not.
+    if (PROCESS_OWNERS.has(file)) found.push(...NAMES_GH.filter((pattern) => pattern.test(code)).map((pattern) => `${file}: names gh (${pattern})`));
+    found.push(...GITHUB_API.filter((pattern) => pattern.test(code)).map((pattern) => `${file}: GitHub API (${pattern})`));
+    return found;
   });
   assert.deepEqual(offenders, []);
+});
+
+test("the owner test catches every way of starting gh", () => {
+  const caught = (file: string, code: string) =>
+    (!PROCESS_OWNERS.has(file) && SPAWNERS.some((pattern) => pattern.test(code))) || (PROCESS_OWNERS.has(file) && NAMES_GH.some((pattern) => pattern.test(code))) || GITHUB_API.some((pattern) => pattern.test(code));
+  assert.equal(caught("prs.ts", `import { spawnSync } from "node:child_process"; spawnSync(bin, args);`), true);
+  assert.equal(caught("prs.ts", `const { exec } = require("child_process");`), true);
+  assert.equal(caught("prs.ts", `import { execa } from "execa";`), true);
+  assert.equal(caught("leftovers.ts", `const tool = "gh"; execFile(tool, ["pr", "list"]);`), true);
+  assert.equal(caught("leftovers.ts", "exec(`gh pr list -R ${repo}`);"), true);
+  assert.equal(caught("leftovers.ts", `execFile("/opt/homebrew/bin/gh", args);`), true);
+  assert.equal(caught("components/x.tsx", `fetch("https://api.github.com/repos/a/b")`), true);
+  // Quoting a command to an agent is fine outside the process owners.
+  assert.equal(caught("server.ts", "Use this instead of `gh pr view`."), false);
 });
 
 test("each resetAt is its own counter, and the lowest live one decides", () => {

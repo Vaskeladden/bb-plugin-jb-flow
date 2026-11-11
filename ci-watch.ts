@@ -92,7 +92,8 @@ export function stepCiWatch(input: CiWatch, light: PrLight, verdict: Verdict, me
 
   if (!done && now - watch.since > CI_TIMEOUT_MS) {
     // A quiet review watch already told the agent about its checks.
-    if (!watch.quiet) notes.push(`Still waiting on ${short(watch.repo)}#${watch.pr} after 3 hours; stopped watching. ${light.url}`);
+    const waiting = verdict.kind === "pending" ? ` (waiting for ${verdict.waitingFor})` : "";
+    if (!watch.quiet) notes.push(`Still waiting on ${short(watch.repo)}#${watch.pr} after 3 hours${waiting}; stopped watching. ${light.url}`);
     done = true;
   }
 
@@ -101,5 +102,8 @@ export function stepCiWatch(input: CiWatch, light: PrLight, verdict: Verdict, me
   return { notes, done, report, logOf, watch };
 }
 
-/** The run id behind a check's details link, for its failed log. */
-export const runIdOf = (url: string | null) => (url ? (/\/actions\/runs\/(\d+)/.exec(url)?.[1] ?? null) : null);
+/** The run and job behind a check's details link (`…/actions/runs/<run>/job/<job>`), for its failed log. */
+export function logTargetOf(url: string | null): { runId: number; jobId: number | null } | null {
+  const match = url ? /\/actions\/runs\/(\d+)(?:\/job\/(\d+))?/.exec(url) : null;
+  return match ? { runId: Number(match[1]), jobId: match[2] ? Number(match[2]) : null } : null;
+}

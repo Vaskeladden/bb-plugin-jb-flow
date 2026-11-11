@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { CI_TIMEOUT_MS, NO_CHECKS_AFTER_MS, runIdOf, stepCiWatch, type CiWatch } from "./ci-watch.ts";
+import { CI_TIMEOUT_MS, logTargetOf, NO_CHECKS_AFTER_MS, stepCiWatch, type CiWatch } from "./ci-watch.ts";
 import type { PrLight, Verdict } from "./hub-model.ts";
 
 const NOW = Date.parse("2026-11-11T12:00:00Z");
@@ -24,9 +24,9 @@ const pr = (over: Partial<PrLight> = {}): PrLight => ({
   ...over,
 });
 const green: Verdict = { kind: "green", required: [], passed: 10, total: 10, optionalFailed: [], pending: 0 };
-const pending: Verdict = { kind: "pending", pending: 3 };
-const lint = { name: "Lint", conclusion: "failure", url: "https://github.com/acme/web-app/actions/runs/77/job/1", blocking: true };
-const failed: Verdict = { kind: "failed", blocking: [lint], pending: 40 };
+const pending: Verdict = { kind: "pending", pending: 3, waitingFor: "required Merge Gate (queued or running)" };
+const lint = { name: "Lint", conclusion: "failure", url: "https://github.com/acme/web-app/actions/runs/77/job/1" };
+const failed: Verdict = { kind: "failed", blocking: [lint], more: 0, pending: 40 };
 
 test("C7/C8: green on a 'both' watch reports and keeps a quiet reviews watch", () => {
   const step = stepCiWatch(watch(), pr(), green, "sam", NOW);
@@ -43,7 +43,9 @@ test("C7: a blocking failure ends a checks watch at once, with its log", () => {
   assert.equal(step.done, true);
   assert.match(step.notes[0]!, /^❌ CI failed on web-app#12 \(abc1234\): Lint\. 40 checks still running/);
   assert.equal(step.logOf, lint);
-  assert.equal(runIdOf(step.logOf!.url), "77");
+  assert.deepEqual(logTargetOf(step.logOf!.url), { runId: 77, jobId: 1 });
+  assert.deepEqual(logTargetOf("https://github.com/acme/web-app/actions/runs/77"), { runId: 77, jobId: null });
+  assert.equal(logTargetOf("https://ci.example.com/build/3"), null);
 });
 
 test("pending: nothing to say", () => {
@@ -102,7 +104,7 @@ test("C10: human reviews and comments after the cutoff; not mine, not bots", () 
 test("C12: three hours without news ends the watch; a quiet one ends silently", () => {
   const old = NOW - CI_TIMEOUT_MS - 1;
   const loud = stepCiWatch(watch({ since: old }), pr(), pending, "sam", NOW);
-  assert.deepEqual(loud.notes, ["Still waiting on web-app#12 after 3 hours; stopped watching. https://github.com/acme/web-app/pull/12"]);
+  assert.deepEqual(loud.notes, ["Still waiting on web-app#12 after 3 hours (waiting for required Merge Gate (queued or running)); stopped watching. https://github.com/acme/web-app/pull/12"]);
   const quiet = stepCiWatch(watch({ since: old, watchFor: "reviews", quiet: true }), pr(), pending, "sam", NOW);
   assert.deepEqual(quiet.notes, []);
   assert.equal(quiet.done, true);
