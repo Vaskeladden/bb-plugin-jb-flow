@@ -1210,7 +1210,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
   bb.agents.registerTool({
     name: "wait_for_ci",
     description:
-      "Wait for a GitHub PR's CI checks and/or new reviews/comments without polling. Registers a watch and returns immediately; when the required checks pass, a check that blocks the merge fails (at once, with its log, even while others still run), a review or comment arrives, or the PR merges/closes, a message is sent to this thread once it is idle; nothing is sent while it is still working. End your turn after calling it.",
+      "Wait for a GitHub PR's CI checks and/or new reviews/comments without polling. Registers a watch and returns immediately; when the base branch's required checks pass, a required check fails (at once, with its log, even while others still run), a review or comment arrives, or the PR merges/closes, a message is sent to this thread once it is idle; nothing is sent while it is still working. Only checks GitHub marks required decide: if the only required check is a gate that waits for every job, a failed job is reported when the gate fails, not before. Failed checks that are not required are named in the message. End your turn after calling it.",
     instructions:
       "Never poll CI or PR state in loops (no `gh pr checks --watch`, `gh run watch`, `until gh ...; sleep`, or repeated `gh pr view`). After pushing or opening a PR, call wait_for_ci (pr optional: defaults to this branch's PR) and end your turn; you'll be messaged with the result once you're idle. Nothing arrives while you keep working, so check pr_status before relying on a PR's state. For a review loop use for: \"both\".",
     parameters: z.object({
@@ -1280,9 +1280,16 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
       refresh: z.boolean().optional().describe("Fetch live state first (one batched GitHub query)"),
     }),
     async execute({ refresh }, ctx) {
+      const clock = (at: number) => new Date(at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+      let notRefreshed = "";
       if (refresh) {
         await prTracker.scan(ctx.threadId);
-        await prTracker.refresh();
+        const read = await prTracker.refresh();
+        // Inside the one-minute bound nothing was read: say how old the states are, so a push since then isn't taken as checked.
+        if (!read.read) {
+          const age = Math.round((Date.now() - read.lastAt) / 1000);
+          notRefreshed = `Not refreshed: PRs are read at most once a minute. States below are from the read at ${clock(read.lastAt)} (${age} s ago); a push since then is not in them. refresh: true reads again from ${clock(read.nextAt)}.\n`;
+        }
       }
       const prs = (await prTracker.byThread())[ctx.threadId] ?? [];
       if (prs.length === 0) return "No PRs linked to this thread. PRs opened with gh pr create are linked automatically; others via `bb jb-flow pr-link <url> --self`.";
@@ -1290,7 +1297,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
       const paused = pausedText(hub.quota());
       const readAt = (at: number) => new Date(at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
       const header = paused ? `${paused}. States below are from the last read before the pause.\n` : "";
-      return header + prs
+      return notRefreshed + header + prs
         .map(
           (pr) =>
             `${pr.stackedOn !== null ? "  └ " : ""}${pr.repo}#${pr.number} [${pr.attention}] ${pr.title} (${pr.head} → ${pr.base}) ${pr.url}${paused ? ` (read ${readAt(pr.checkedAt)})` : ""}`,

@@ -292,9 +292,9 @@ export function createPrTracker(bb: BbPluginApi, changed: () => void, hub: Hub) 
   }
   hub.onCycle(apply);
 
-  /** A read of every linked PR now (at most once a minute; the hub reads them every few minutes anyway). */
-  async function refresh(): Promise<void> {
-    await hub.soon();
+  /** A read of every linked PR now, unless one started in the last minute (then says so and when). */
+  function refresh() {
+    return hub.soon();
   }
 
   /** PRs per active thread, stack-ordered, for the UI. */

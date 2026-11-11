@@ -5,6 +5,7 @@
 // starts `gh`.
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
+import type { RequiredChecks } from "./hub-model.ts";
 
 export const GH_MISSING = "The GitHub CLI (gh) isn't installed or isn't on PATH. Install it and run `gh auth login`.";
 
@@ -238,34 +239,35 @@ export function createReads(github: GitHub) {
       const text = lines.slice(-60).join("\n");
       return `\n\`\`\`\n${text.length > 4000 ? `…${text.slice(-4000)}` : text}\n\`\`\``;
     },
-    /** Check names a branch requires before merging (rulesets and classic protection); null when GitHub won't say. */
-    async requiredChecks(repo: string, branch: string): Promise<string[] | null> {
-      // Both sources must answer: a failed rules read next to "no classic
-      // protection" would otherwise look like "nothing required".
+    /**
+     * Check names a branch requires before merging: rulesets plus classic
+     * branch protection. Classic required checks are read from the branch
+     * itself, which shows them to anyone who can read the repo (the
+     * protection endpoint answers a plain 404 to non-admins, the same as "not
+     * protected"; checked live on 11 Nov 2026). When the branch can't be
+     * read, the rulesets alone answer, marked `classicUnreadable`. Null when
+     * the rulesets can't be read: nothing is known.
+     */
+    async requiredChecks(repo: string, branch: string): Promise<RequiredChecks | null> {
+      const keepRateLimits = (error: Error) => {
+        if (error instanceof RateLimitedError || error instanceof QuotaPausedError) throw error;
+        return null;
+      };
       const names = new Set<string>();
       const rules = await restJson<Array<{ type: string; parameters?: { required_status_checks?: Array<{ context: string }> } }>>(
         `repos/${repo}/rules/branches/${encodeURIComponent(branch)}`,
         `the rules of ${repo}:${branch}`,
-      ).catch((error: Error) => {
-        if (error instanceof RateLimitedError || error instanceof QuotaPausedError) throw error;
-        return null;
-      });
+      ).catch(keepRateLimits);
       if (rules === null) return null;
       for (const rule of rules) if (rule.type === "required_status_checks") for (const check of rule.parameters?.required_status_checks ?? []) names.add(check.context);
-      let unprotected = false;
-      const classic = await restJson<{ contexts?: string[]; checks?: Array<{ context: string }> }>(
-        `repos/${repo}/branches/${encodeURIComponent(branch)}/protection/required_status_checks`,
-        `the protection of ${repo}:${branch}`,
-      ).catch((error: Error) => {
-        if (error instanceof RateLimitedError || error instanceof QuotaPausedError) throw error;
-        // 404 ("Branch not protected", "Required status checks not enabled") is an answer: nothing required there.
-        if (/\b404\b|not protected|not enabled/i.test(error.message)) unprotected = true;
-        return null;
-      });
-      if (classic === null && !unprotected) return null;
-      for (const context of classic?.contexts ?? []) names.add(context);
-      for (const check of classic?.checks ?? []) names.add(check.context);
-      return [...names].sort();
+      type Classic = { enforcement_level?: string; contexts?: string[]; checks?: Array<{ context: string }> };
+      const classic = await restJson<{ protection?: { required_status_checks?: Classic } }>(`repos/${repo}/branches/${encodeURIComponent(branch)}`, `the branch ${repo}:${branch}`).catch(keepRateLimits);
+      const checks = classic?.protection?.required_status_checks;
+      if (checks && checks.enforcement_level !== "off") {
+        for (const context of checks.contexts ?? []) names.add(context);
+        for (const check of checks.checks ?? []) names.add(check.context);
+      }
+      return { names: [...names].sort(), classicUnreadable: classic === null };
     },
     /** Merged PRs into a base, newest first (release watcher). */
     async mergedPrs(repo: string, base: string, limit: number): Promise<Array<{ number: number; title: string; mergedAt: string; mergeCommit: { oid: string } | null }>> {

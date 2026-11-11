@@ -18,6 +18,7 @@ import {
 } from "./hub-model.ts";
 
 const REQUIRED = ["Build", "Merge Gate"];
+const RULES = { names: REQUIRED, classicUnreadable: false };
 const NOW = Date.parse("2026-11-11T12:00:00Z");
 const DONE = { total: 552, pending: 0, failed: 0, passed: 552 };
 
@@ -48,7 +49,7 @@ function detail(over: Partial<PrDetail> = {}): PrDetail {
   return {
     headSha: "abc1234def",
     counts: DONE,
-    suites: [{ id: 1, failed: [], failedMore: 0, required: REQUIRED.map((name) => passed(name)) }],
+    suites: [{ failed: [], failedMore: 0, required: REQUIRED.map((name) => passed(name)) }],
     statuses: [],
     incomplete: false,
     lightCounts: DONE,
@@ -74,45 +75,50 @@ test("counts by state: failures, pending and the rest", () => {
 
 test("green and failed lines", () => {
   const counts = { total: 552, pending: 4, failed: 1, passed: 547 };
-  const read = detail({ counts, suites: [{ id: 1, failed: [], failedMore: 0, required: REQUIRED.map((name) => passed(name)) }, { id: 2, failed: [{ name: "Docs Preview", conclusion: "failure", url: null }], failedMore: 0, required: [] }] });
-  const green = checksVerdict(light({ counts }), read, REQUIRED);
+  const read = detail({ counts, suites: [{ failed: [], failedMore: 0, required: REQUIRED.map((name) => passed(name)) }, { failed: [{ name: "Docs Preview", conclusion: "failure", url: null }], failedMore: 0, required: [] }] });
+  const green = checksVerdict(light({ counts }), read, RULES);
   assert.equal(green.kind, "green");
   assert.equal(
     verdictText(light(), green as Extract<typeof green, { kind: "green" }>),
     "✅ CI is green on web-app#12 (abc1234): required checks passed (Build, Merge Gate); 547 of 552 checks passed. Optional checks failed (not required): Docs Preview. 4 optional checks still running.",
   );
-  const failing = { total: 552, pending: 300, failed: 12, passed: 240 };
-  const gateRunning = detail({
+  const failing = { total: 552, pending: 300, failed: 13, passed: 239 };
+  const gateFailed = detail({
     counts: failing,
-    suites: [{ id: 1, failed: [{ name: "Lint", conclusion: "failure", url: "u" }], failedMore: 11, required: [passed("Build"), { name: "Merge Gate", state: "pending", startedAt: NOW - 1000, url: null }] }],
+    suites: [{ failed: [{ name: "Lint", conclusion: "failure", url: "u" }, { name: "Merge Gate", conclusion: "failure", url: "g" }], failedMore: 11, required: [passed("Build"), { name: "Merge Gate", state: "failed", startedAt: NOW - 1000, url: "g" }] }],
   });
-  const failed = checksVerdict(light({ counts: failing }), gateRunning, REQUIRED);
+  const failed = checksVerdict(light({ counts: failing }), gateFailed, RULES);
   assert.equal(
     verdictText(light(), failed as Extract<typeof failed, { kind: "failed" }>),
-    "❌ CI failed on web-app#12 (abc1234): Lint and 11 more. 300 checks still running; this is the first failure.",
+    "❌ CI failed on web-app#12 (abc1234): Merge Gate. Optional checks failed (not required): Lint and 11 more. 300 checks still running.",
   );
+  // An optional job failing while the gate still runs does not fail the PR.
+  const gateRunning = detail({ counts: failing, suites: [{ failed: [{ name: "Lint", conclusion: "failure", url: "u" }], failedMore: 0, required: [passed("Build"), { name: "Merge Gate", state: "pending", startedAt: NOW - 1000, url: null }] }] });
+  assert.equal(checksVerdict(light({ counts: failing }), gateRunning, RULES).kind, "pending");
 });
 
 test("pending says what it waits for", () => {
-  const notRead = checksVerdict(light(), undefined, REQUIRED);
+  const notRead = checksVerdict(light(), undefined, RULES);
   assert.deepEqual(notRead, { kind: "pending", pending: 0, waitingFor: "check details not read this cycle" });
   const unknown = checksVerdict(light(), detail(), null);
+  const allChecks = checksVerdict(light(), detail({ suites: [] }), { names: [], classicUnreadable: true });
+  assert.equal(allChecks.kind === "green" && verdictText(light(), allChecks), "✅ CI is green on web-app#12 (abc1234) (required checks not readable; judged on all checks): 552 checks passed.");
   assert.match(unknown.kind === "pending" ? unknown.waitingFor : "", /required checks \(could not read them\)/);
-  const queued = checksVerdict(light(), detail({ suites: [{ id: 1, failed: [], failedMore: 0, required: [passed("Build"), { name: "Merge Gate", state: "pending", startedAt: null, url: null }] }] }), REQUIRED);
+  const queued = checksVerdict(light(), detail({ suites: [{ failed: [], failedMore: 0, required: [passed("Build"), { name: "Merge Gate", state: "pending", startedAt: null, url: null }] }] }), RULES);
   assert.match(queued.kind === "pending" ? queued.waitingFor : "", /^required Merge Gate \(queued or running\)$/);
-  assert.equal(checksVerdict(light({ counts: null }), undefined, REQUIRED).kind, "none");
+  assert.equal(checksVerdict(light({ counts: null }), undefined, RULES).kind, "none");
 });
 
 test("a required check reported as a commit status counts when no check run has its name", () => {
-  const read = detail({ suites: [{ id: 1, failed: [], failedMore: 0, required: [passed("Build")] }], statuses: [{ name: "Merge Gate", state: "failed", url: "s" }] });
+  const read = detail({ suites: [{ failed: [], failedMore: 0, required: [passed("Build")] }], statuses: [{ name: "Merge Gate", state: "failed", url: "s" }] });
   assert.deepEqual(requiredStates(read, REQUIRED).map((state) => [state.name, state.state]), [["Build", "passed"], ["Merge Gate", "failed"]]);
-  assert.equal(checksVerdict(light(), read, REQUIRED).kind, "failed");
+  assert.equal(checksVerdict(light(), read, RULES).kind, "failed");
 });
 
 test("a detail read of another head is not used", () => {
   const answer = { commits: { nodes: [{ commit: { oid: "other", statusCheckRollup: null, status: null, checkSuites: { totalCount: 0, nodes: [] } } }] } };
   assert.equal(readDetail(answer, REQUIRED, light(), NOW), null);
-  assert.equal(checksVerdict(light(), detail({ headSha: "other" }), REQUIRED).kind, "pending");
+  assert.equal(checksVerdict(light(), detail({ headSha: "other" }), RULES).kind, "pending");
 });
 
 test("detail reads only when they can change the answer", () => {
@@ -138,14 +144,14 @@ test("detail reads only when they can change the answer", () => {
 });
 
 test("sidebar attention uses the last detail of this head, for display only", () => {
-  assert.equal(attentionOf(light(), detail(), REQUIRED), "ready_to_merge");
+  assert.equal(attentionOf(light(), detail(), RULES), "ready_to_merge");
   const failing = light({ counts: { total: 552, pending: 0, failed: 1, passed: 551 } });
-  assert.equal(attentionOf(failing, undefined, REQUIRED), "checks_failed");
-  const optional = detail({ suites: [{ id: 1, failed: [], failedMore: 0, required: REQUIRED.map((name) => passed(name)) }, { id: 2, failed: [{ name: "Docs Preview", conclusion: "failure", url: null }], failedMore: 0, required: [] }] });
-  assert.equal(attentionOf(failing, optional, REQUIRED), "ready_to_merge");
-  const gateMissing = detail({ suites: [{ id: 1, failed: [], failedMore: 0, required: [passed("Build")] }] });
-  assert.equal(attentionOf(light(), gateMissing, REQUIRED), "checks_pending");
-  assert.equal(attentionOf(light({ state: "MERGED" }), undefined, REQUIRED), "merged");
+  assert.equal(attentionOf(failing, undefined, RULES), "checks_failed");
+  const optional = detail({ suites: [{ failed: [], failedMore: 0, required: REQUIRED.map((name) => passed(name)) }, { failed: [{ name: "Docs Preview", conclusion: "failure", url: null }], failedMore: 0, required: [] }] });
+  assert.equal(attentionOf(failing, optional, RULES), "ready_to_merge");
+  const gateMissing = detail({ suites: [{ failed: [], failedMore: 0, required: [passed("Build")] }] });
+  assert.equal(attentionOf(light(), gateMissing, RULES), "checks_pending");
+  assert.equal(attentionOf(light({ state: "MERGED" }), undefined, RULES), "merged");
 });
 
 test("light query: all repos and runs in one query, feedback only where asked", () => {

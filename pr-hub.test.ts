@@ -29,8 +29,12 @@ function lightPr(pairs: Pairs, oid = HEAD) {
 
 const node = (name: string, run: Run) => ({ name, status: run.status, conclusion: run.conclusion ?? null, startedAt: run.startedAt ?? null, detailsUrl: run.url ?? null });
 
-/** A detail answer; both suite id fields are given so the same answer reads in older query shapes too. */
-function detailPr(pairs: Pairs, suites: Suite[], oid = HEAD, totalCount = suites.length) {
+/**
+ * A detail answer for the required checks the query asked for (`aliases`:
+ * alias and check name, in query order). Both suite id fields are given so the
+ * same answer reads in older query shapes too.
+ */
+function detailPr(pairs: Pairs, suites: Suite[], aliases: Array<[string, string]>, oid = HEAD, totalCount = suites.length) {
   return {
     commits: {
       nodes: [
@@ -48,8 +52,9 @@ function detailPr(pairs: Pairs, suites: Suite[], oid = HEAD, totalCount = suites
                   totalCount: suite.failed?.length ?? 0,
                   nodes: (suite.failed ?? []).map((check) => ({ name: check.name, conclusion: "FAILURE", detailsUrl: check.url ?? null, isRequired: false })),
                 },
-                q0: { nodes: (suite.build ?? []).map((run) => node("Build", run)) },
-                q1: { nodes: (suite.gate ?? []).map((run) => node("Merge Gate", run)) },
+                ...Object.fromEntries(
+                  aliases.map(([alias, name]) => [alias, { nodes: ((name === "Build" ? suite.build : name === "Merge Gate" ? suite.gate : []) ?? []).map((run) => node(name, run)) }]),
+                ),
               })),
             },
           },
@@ -65,6 +70,8 @@ type Script = {
   lightRemaining?: number;
   detail?: { pairs: Pairs; suites: Suite[]; oid?: string; totalCount?: number } | "error";
   rules?: string[] | "error";
+  /** Classic protection's required checks; "error" when the branch can't be read. */
+  classic?: string[] | "error";
 };
 
 function fakeGh(script: Script) {
@@ -82,16 +89,18 @@ function fakeGh(script: Script) {
       calls.push("detail");
       const detail = script.detail;
       if (detail === undefined || detail === "error") return fail("gh: Something went wrong while executing your query.");
-      return ok({ rateLimit: { remaining: 3990, resetAt: RESET() }, r: { d12: detailPr(detail.pairs, detail.suites, detail.oid, detail.totalCount) } });
+      const aliases = [...query.matchAll(/(q\d+): checkRuns\(first: \d+, filterBy: \{checkType: LATEST, checkName: "([^"]+)"\}/g)].map((match): [string, string] => [match[1]!, match[2]!]);
+      return ok({ rateLimit: { remaining: 3990, resetAt: RESET() }, r: { d12: detailPr(detail.pairs, detail.suites, aliases, detail.oid, detail.totalCount) } });
     }
     if (args[1]?.includes("/rules/branches/")) {
       calls.push("rules");
       if (script.rules === "error") return fail("gh: Server Error (HTTP 502)");
       return { stdout: JSON.stringify([{ type: "required_status_checks", parameters: { required_status_checks: (script.rules ?? ["Build", "Merge Gate"]).map((context) => ({ context })) } }]), stderr: "", error: null };
     }
-    if (args[1]?.includes("/protection/required_status_checks")) {
-      calls.push("protection");
-      return fail("gh: Required status checks not enabled (HTTP 404)");
+    if (/\/branches\/[^/]+$/.test(args[1] ?? "")) {
+      calls.push("branch");
+      if (script.classic === "error") return fail("gh: Resource not accessible by personal access token (HTTP 403)");
+      return { stdout: JSON.stringify({ protected: true, protection: { required_status_checks: { enforcement_level: script.classic ? "everyone" : "off", contexts: script.classic ?? [], checks: [] } } }), stderr: "", error: null };
     }
     if (args[1] === "rate_limit") return { stdout: "[0, 0]", stderr: "", error: null };
     calls.push(args.join(" "));
@@ -223,13 +232,39 @@ test("a required check in two suites: the latest started wins, so a passing re-r
   assert.equal(queued.kind, "pending");
 });
 
-test("a job that fails while its required gate is pending fails the PR at once", async () => {
-  const verdict = await verdictOf({
-    light: [["SUCCESS", 200], ["IN_PROGRESS", 300], ["FAILURE", 1]],
-    detail: { pairs: [["SUCCESS", 200], ["IN_PROGRESS", 300], ["FAILURE", 1]], suites: [{ id: 1, build: [passed()], gate: [{ status: "IN_PROGRESS", startedAt: ago(10) }], failed: [{ name: "Lint", url: `https://github.com/${REPO}/actions/runs/7/job/8` }] }] },
-  });
+test("an optional job fails while the required gate still runs: pending, then green with the job named when the gate passes", async () => {
+  const running: Pairs = [["SUCCESS", 200], ["IN_PROGRESS", 300], ["FAILURE", 1]];
+  const lint = { name: "Lint", url: `https://github.com/${REPO}/actions/runs/7/job/8` };
+  const script: Script = { light: running, detail: { pairs: running, suites: [{ id: 1, build: [passed()], gate: [{ status: "IN_PROGRESS", startedAt: ago(10) }], failed: [lint] }] } };
+  const { hub } = setup(script);
+  const first = (await hub.cycle())!.verdict(REPO, 12)!;
+  assert.equal(first.kind, "pending");
+  const done: Pairs = [["SUCCESS", 500], ["FAILURE", 1]];
+  script.light = done;
+  script.detail = { pairs: done, suites: [{ id: 1, build: [passed()], gate: [passed(1)], failed: [lint] }] };
+  const second = (await hub.cycle())!.verdict(REPO, 12)!;
+  assert.equal(second.kind, "green");
+  assert.deepEqual(second.kind === "green" && second.optionalFailed.map((check) => check.name), ["Lint"]);
+});
+
+test("the required gate fails while other checks run: failed at once, named with the optional failures", async () => {
+  const running: Pairs = [["SUCCESS", 200], ["IN_PROGRESS", 300], ["FAILURE", 2]];
+  const verdict = await verdictOf({ light: running, detail: { pairs: running, suites: [{ id: 1, build: [passed()], gate: [failedRun(1)], failed: [{ name: "Lint" }] }] } });
   assert.equal(verdict.kind, "failed");
-  assert.deepEqual(verdict.kind === "failed" && verdict.blocking.map((check) => check.name), ["Lint"]);
+  assert.deepEqual(verdict.kind === "failed" && [verdict.blocking.map((check) => check.name), verdict.optionalFailed.map((check) => check.name)], [["Merge Gate"], ["Lint"]]);
+});
+
+test("classic required checks come from the branch; when it can't be read, the rulesets alone decide, and with none, all checks do", async () => {
+  // Classic protection adds a required check the rulesets don't have.
+  const classic = await verdictOf({ light: ALL_DONE, rules: ["Merge Gate"], classic: ["Build"], detail: { pairs: ALL_DONE, suites: [{ id: 1, gate: [passed()] }] } });
+  assert.match(classic.kind === "pending" ? classic.waitingFor : "", /Build \(not created yet\)/);
+  // Branch unreadable, rulesets name the gate: judged on the gate.
+  const rulesOnly = await verdictOf({ light: [["SUCCESS", 9], ["FAILURE", 1]], rules: ["Merge Gate"], classic: "error", detail: { pairs: [["SUCCESS", 9], ["FAILURE", 1]], suites: [{ id: 1, gate: [passed()], failed: [{ name: "Docs Preview" }] }] } });
+  assert.equal(rulesOnly.kind, "green");
+  // Branch unreadable and no rulesets: every check decides, and the message says why.
+  const all = await verdictOf({ light: [["SUCCESS", 10]], rules: [], classic: "error", detail: { pairs: [["SUCCESS", 10]], suites: [{ id: 1 }] } });
+  assert.equal(all.kind, "green");
+  assert.equal(all.kind === "green" && all.note, "required checks not readable; judged on all checks");
 });
 
 test("a failure in a workflow with no required check does not fail the PR", async () => {
@@ -305,10 +340,12 @@ test("runs are read in the light query, beyond the first 60 too", async () => {
   assert.equal(view.run(REPO, 1000)?.failedMore, 22);
 });
 
-test("soon(): at most one early cycle a minute", async () => {
+test("soon(): at most one early cycle a minute, and says when it did not read", async () => {
   const { hub, calls } = setup({ light: ALL_DONE, detail: { pairs: ALL_DONE, suites: [{ id: 1, build: [passed()], gate: [passed()] }] } });
-  await hub.soon();
-  await hub.soon();
+  const first = await hub.soon();
+  assert.equal(first.read, true);
+  const second = await hub.soon();
+  assert.deepEqual(second, { read: false, lastAt: first.lastAt, nextAt: first.lastAt + 60_000 });
   await Promise.all([hub.soon(), hub.soon()]);
   assert.equal(calls.filter((call) => call === "light").length, 1);
 });

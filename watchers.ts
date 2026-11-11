@@ -11,7 +11,7 @@
 //   everything else and the thread is messaged once it finishes, with the failed log.
 // - CI watcher: agents call `wait_for_ci` instead of polling `gh` in loops; the
 //   hub (pr-hub.ts) reads every watched PR in one shared query and the thread
-//   is messaged when its required checks pass, a check that blocks the merge
+//   is messaged when its required checks pass, a required check
 //   fails, reviews/comments arrive, or the PR merges. A thread that is still
 //   working is left alone; its news arrives as one message once it goes idle.
 import type { BbPluginApi } from "@get-bb/plugin-sdk";

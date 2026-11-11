@@ -23,10 +23,10 @@ const pr = (over: Partial<PrLight> = {}): PrLight => ({
   readAt: NOW,
   ...over,
 });
-const green: Verdict = { kind: "green", required: [], passed: 10, total: 10, optionalFailed: [], pending: 0 };
+const green: Verdict = { kind: "green", required: [], passed: 10, total: 10, optionalFailed: [], more: 0, pending: 0, note: null };
 const pending: Verdict = { kind: "pending", pending: 3, waitingFor: "required Merge Gate (queued or running)" };
 const lint = { name: "Lint", conclusion: "failure", url: "https://github.com/acme/web-app/actions/runs/77/job/1" };
-const failed: Verdict = { kind: "failed", blocking: [lint], more: 0, pending: 40 };
+const failed: Verdict = { kind: "failed", blocking: [lint], optionalFailed: [], more: 0, pending: 40, note: null };
 
 test("C7/C8: green on a 'both' watch reports and keeps a quiet reviews watch", () => {
   const step = stepCiWatch(watch(), pr(), green, "sam", NOW);
@@ -38,7 +38,7 @@ test("C7/C8: green on a 'both' watch reports and keeps a quiet reviews watch", (
   assert.equal(step.watch.reviewsSince, NOW);
 });
 
-test("C7: a blocking failure ends a checks watch at once, with its log", () => {
+test("C7: a required check failing ends a checks watch at once, with its log", () => {
   const step = stepCiWatch(watch({ watchFor: "checks" }), pr({ counts: { total: 50, pending: 40, failed: 1, passed: 9 } }), failed, "sam", NOW);
   assert.equal(step.done, true);
   assert.match(step.notes[0]!, /^❌ CI failed on web-app#12 \(abc1234\): Lint\. 40 checks still running/);

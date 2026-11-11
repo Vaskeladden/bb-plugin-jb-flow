@@ -35,6 +35,7 @@ import {
   type PrDetail,
   type PrKey,
   type PrLight,
+  type RequiredChecks,
   type RunItem,
   type RunLight,
   type Verdict,
@@ -79,9 +80,9 @@ const rateLimited = (error: unknown) => error instanceof RateLimitedError || err
 export function createHub(bb: BbPluginApi, github: GitHub, reads: Reads, interest: () => Promise<Interest>) {
   const lights = new Map<PrKey, PrLight>();
   /** The last detail read of each PR, any cycle: for `detailNeeded` and the sidebar, never for a verdict. */
-  const details = new Map<PrKey, { detail: PrDetail; required: string[] | null }>();
+  const details = new Map<PrKey, { detail: PrDetail; required: RequiredChecks | null }>();
   /** Required checks per "repo:base"; only answers are kept, an unknown is asked again at the next detail read. */
-  const required = new Map<string, { names: string[]; at: number }>();
+  const required = new Map<string, { checks: RequiredChecks; at: number }>();
   const listeners: Array<(view: HubView) => Promise<void>> = [];
   let login: string | null = null;
   let lastCycleAt = 0;
@@ -90,17 +91,17 @@ export function createHub(bb: BbPluginApi, github: GitHub, reads: Reads, interes
   let signal: AbortSignal | null = null;
   const stopped = () => signal?.aborted === true;
 
-  async function requiredFor(repo: string, base: string): Promise<string[] | null> {
+  async function requiredFor(repo: string, base: string): Promise<RequiredChecks | null> {
     const key = `${repo}:${base}`;
     const cached = required.get(key);
-    if (cached && Date.now() - cached.at < REQUIRED_TTL_MS) return cached.names;
-    const names = await reads.requiredChecks(repo, base).catch((error: unknown) => {
+    if (cached && Date.now() - cached.at < REQUIRED_TTL_MS) return cached.checks;
+    const checks = await reads.requiredChecks(repo, base).catch((error: unknown) => {
       if (rateLimited(error)) throw error;
       bb.log.warn(`github hub: rules of ${key}: ${String(error)}`);
       return null;
     });
-    if (names !== null) required.set(key, { names, at: Date.now() });
-    return names;
+    if (checks !== null) required.set(key, { checks, at: Date.now() });
+    return checks;
   }
 
   type Cycle = { at: number; fresh: Set<PrKey>; details: Map<PrKey, PrDetail>; runs: Map<string, RunLight>; missing: Set<string>; unreadable: Set<string> };
@@ -152,18 +153,19 @@ export function createHub(bb: BbPluginApi, github: GitHub, reads: Reads, interes
     for (const [group, numbers] of due) {
       const [repo, base] = group.split(" ") as [string, string];
       if (stopped()) return;
-      const names = await requiredFor(repo, base);
+      const rules = await requiredFor(repo, base);
+      const names = rules?.names ?? [];
       for (let i = 0; i < numbers.length; i += DETAIL_BATCH) {
         if (stopped()) return;
         const batch = numbers.slice(i, i + DETAIL_BATCH);
         try {
-          const { data } = await github.graphql<{ r?: Record<string, unknown> | null }>(detailQuery(repo, batch, names ?? []), `checks of ${repo}`);
+          const { data } = await github.graphql<{ r?: Record<string, unknown> | null }>(detailQuery(repo, batch, names), `checks of ${repo}`);
           for (const number of batch) {
             const key = prKey(repo, number);
             // Null when a push landed between the light read and this one: the PR stays pending.
-            const detail = readDetail(data.r?.[`d${number}`] as Parameters<typeof readDetail>[0], names ?? [], lights.get(key)!, cycle.at);
+            const detail = readDetail(data.r?.[`d${number}`] as Parameters<typeof readDetail>[0], names, lights.get(key)!, cycle.at);
             if (!detail) continue;
-            details.set(key, { detail, required: names });
+            details.set(key, { detail, required: rules });
             cycle.details.set(key, detail);
           }
         } catch (error) {
@@ -234,15 +236,18 @@ export function createHub(bb: BbPluginApi, github: GitHub, reads: Reads, interes
   /**
    * A cycle now (`refresh: true`, a new PR), unless one started in the last
    * minute: then that one's results stand. It takes the place of the next
-   * scheduled cycle, which waits a minute from this one.
+   * scheduled cycle, which waits a minute from this one. Says whether it
+   * read, when the last read started, and from when a new one can start.
    */
-  async function soon(): Promise<void> {
+  async function soon(): Promise<{ read: boolean; lastAt: number; nextAt: number }> {
+    const answer = (read: boolean) => ({ read, lastAt: lastCycleAt, nextAt: lastCycleAt + MIN_GAP_MS });
     if (running) {
       await running;
-      return;
+      return answer(true);
     }
-    if (Date.now() - lastCycleAt < MIN_GAP_MS) return;
+    if (Date.now() - lastCycleAt < MIN_GAP_MS) return answer(false);
     await cycle();
+    return answer(true);
   }
 
   async function tick() {

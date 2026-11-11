@@ -57,7 +57,7 @@ function fakeGh(world: World) {
     }
     if (query.includes("checkSuites(first")) {
       const lint = world.checks === "lint-failed";
-      const gate = lint ? { name: "Merge Gate", status: "IN_PROGRESS", conclusion: null, startedAt: new Date().toISOString(), detailsUrl: null } : { name: "Merge Gate", status: "COMPLETED", conclusion: "SUCCESS", startedAt: new Date().toISOString(), detailsUrl: null };
+      const gate = lint ? { name: "Merge Gate", status: "COMPLETED", conclusion: "FAILURE", startedAt: new Date().toISOString(), detailsUrl: `https://github.com/${REPO}/actions/runs/7/job/8` } : { name: "Merge Gate", status: "COMPLETED", conclusion: "SUCCESS", startedAt: new Date().toISOString(), detailsUrl: null };
       const pairs = lint ? [["SUCCESS", 200], ["IN_PROGRESS", 300], ["FAILURE", 1]] : [["SUCCESS", 552]];
       return ok({
         data: {
@@ -76,7 +76,7 @@ function fakeGh(world: World) {
                         nodes: [
                           {
                             databaseId: 1,
-                            failed: { totalCount: lint ? 1 : 0, nodes: lint ? [{ name: "Lint", conclusion: "FAILURE", detailsUrl: `https://github.com/${REPO}/actions/runs/7/job/8` }] : [] },
+                            failed: { totalCount: lint ? 2 : 0, nodes: lint ? [{ name: "Lint", conclusion: "FAILURE", detailsUrl: `https://github.com/${REPO}/actions/runs/7/job/9` }, { name: "Merge Gate", conclusion: "FAILURE", detailsUrl: `https://github.com/${REPO}/actions/runs/7/job/8` }] : [] },
                             q0: { nodes: [gate] },
                           },
                         ],
@@ -91,7 +91,7 @@ function fakeGh(world: World) {
       });
     }
     if (args[1]?.includes("/rules/branches/")) return ok([{ type: "required_status_checks", parameters: { required_status_checks: [{ context: "Merge Gate" }] } }]);
-    if (args[1]?.includes("/protection/")) return failure("gh: Branch not protected (HTTP 404)");
+    if (/\/branches\/main$/.test(args[1] ?? "")) return ok({ protected: true, protection: { required_status_checks: { enforcement_level: "off", contexts: [], checks: [] } } });
     if (args[0] === "run" && args.includes("--json")) {
       return world.run ? ok({ status: world.run.status.toLowerCase(), conclusion: world.run.conclusion, name: "Deploy", displayTitle: "Release 3", url: `https://github.com/${REPO}/actions/runs/77` }) : failure("gh: run not found (HTTP 404)");
     }
@@ -163,11 +163,11 @@ test("green: the thread is told once and a checks watch ends", async () => {
   assert.equal(sent.length, 1);
 });
 
-test("a blocking failure while others run: told at once, with the job's log or why there is none", async () => {
+test("the required gate fails while others run: told at once, with its job's log or why there is none", async () => {
   const { hub, watchers, sent, calls } = setup({ prState: "OPEN", checks: "lint-failed" });
   await watchers.watchCi("t1", { pr: 12, watchFor: "checks" });
   await hub.cycle();
-  assert.match(sent[0]!.text, /❌ CI failed on web-app#12 \(abc1234\): Lint\. 300 checks still running; this is the first failure\.\n\(Log not available: .*Not Found/);
+  assert.match(sent[0]!.text, /❌ CI failed on web-app#12 \(abc1234\): Merge Gate\. Optional checks failed \(not required\): Lint\. 300 checks still running\.\n\(Log not available: .*Not Found/);
   assert.ok(calls.some((args) => args.join(" ") === `api --allow-escape-sequences repos/${REPO}/actions/jobs/8/logs`));
 });
 
