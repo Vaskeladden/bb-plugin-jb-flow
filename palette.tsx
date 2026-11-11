@@ -11,6 +11,7 @@ import {
   experimental_copyToClipboard as copyToClipboard,
   experimental_usePluginId as usePluginId,
   experimental_useSidebarThreadPullRequest as useSidebarThreadPullRequest,
+  experimental_useSidebarNavigation as useSidebarNavigation,
   experimental_useSidebarThreads as useSidebarThreads,
   experimental_useThreadActions as useThreadActions,
   useBbContext,
@@ -367,6 +368,7 @@ export function Palette({
   const sdk = useSdk();
   const rpc = useRpc<typeof rpcContract>();
   const navigate = useBbNavigate();
+  const sidebarNav = useSidebarNavigation();
   const context = useBbContext();
   const pluginId = usePluginId();
   const { threads, projects, sections: threadSections } = useSidebarThreads();
@@ -697,11 +699,22 @@ export function Palette({
         icon: <Icon name="MessageSquarePlus" />,
         run: () => navigate.toCompose({ ...(composeProject ? { projectId: composeProject } : {}), focusPrompt: true }),
       },
-      { id: "studio", title: "Open Studio", keywords: "overview board", icon: <Icon name="Layers" />, run: () => navigate.toPluginPanel("studio") },
     );
+    // Every page in the sidebar's top bar (dashboards, Studio, Automations…),
+    // hidden ones too, so Cmd+K finds a dashboard by its name.
+    for (const item of sidebarNav.items) {
+      if (item.id === "__bb__/new-thread" || item.id === "__bb__/search-threads") continue;
+      entries.push({
+        id: `page:${item.id}`,
+        title: `Open ${item.label}`,
+        keywords: "dashboard page panel side view",
+        icon: <Icon name="LayoutDashboard" />,
+        run: () => sidebarNav.actions.activate(item.id, { openInSplit: false }),
+      });
+    }
     return entries;
     // projectName reads projectsById, a dependency here.
-  }, [currentInfo, currentReplies, flow, rpc, navigate, composeProject, projectsById, catchUpOn, threads, selectedWorkspace, workspaceState]);
+  }, [currentInfo, currentReplies, flow, rpc, navigate, composeProject, projectsById, catchUpOn, threads, selectedWorkspace, workspaceState, sidebarNav]);
 
   // --- what to list ---
   const levelEntries: readonly Entry[] | null =

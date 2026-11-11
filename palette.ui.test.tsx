@@ -84,6 +84,7 @@ const threads = [
 
 type MountOptions = {
   settings?: Record<string, boolean>;
+  navItems?: RenderSlotOptions["sidebarNavigation"];
   state?: Partial<FlowState>;
   workspaces?: WorkspaceState;
   keybindings?: unknown[] | null;
@@ -134,6 +135,7 @@ async function mount(options: MountOptions = {}) {
         },
       },
       realtimeConnectionState: "connected",
+      sidebarNavigation: options.navItems,
     },
   );
 }
@@ -451,6 +453,21 @@ describe("palette preview", () => {
     fireEvent.change(input, { target: { value: ">" } });
     expect(await within(pane).findByText("Tips")).toBeTruthy();
     vi.unstubAllGlobals();
+  });
+
+  it("finds a sidebar page such as a dashboard by its name and opens it", async () => {
+    const page = (id: string, label: string) =>
+      ({ id, label, icon: { kind: "plugin", pluginId: id.split("/")[0], icon: null }, action: { kind: "plugin" }, isDisabled: false, isVisible: false, isLoading: false, pluginId: id.split("/")[0], shortcut: null, badge: null }) as never;
+    const slot = await mount({ navItems: { items: [page("__bb__/new-thread", "New thread"), page("vaskeladden-bb/errors", "Errors")] } });
+    const input = await openPalette(slot);
+    fireEvent.change(input, { target: { value: "errors" } });
+    const row = await waitFor(() => {
+      const found = slot.getAllByRole("option").find((option) => option.textContent?.includes("Open Errors"));
+      expect(found).toBeTruthy();
+      return found!;
+    });
+    fireEvent.click(row);
+    await waitFor(() => expect(slot.sidebarNavigationCalls.some((call) => call.method === "activate" && JSON.stringify(call).includes("vaskeladden-bb/errors"))).toBe(true));
   });
 
   it("offers Catch up with the unread count while it's on, and opens it", async () => {
