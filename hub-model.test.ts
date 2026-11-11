@@ -15,7 +15,7 @@ import {
   type PrLight,
 } from "./hub-model.ts";
 
-const REQUIRED = ["Dispatch Boundary", "Merge Gate"];
+const REQUIRED = ["Build", "Merge Gate"];
 const NOW = Date.parse("2026-11-11T12:00:00Z");
 
 function light(over: Partial<PrLight> = {}): PrLight {
@@ -60,11 +60,11 @@ test("counts by state: failures, pending and the rest", () => {
 
 test("an optional check that fails on every PR does not fail the PR", () => {
   const pr = light({ counts: { total: 552, pending: 0, failed: 1, passed: 551 } });
-  const read = detail({ failedCount: 1, failed: [{ name: "Migration Safety", conclusion: "failure", url: null, blocking: false }] });
+  const read = detail({ failedCount: 1, failed: [{ name: "Docs Preview", conclusion: "failure", url: null, blocking: false }] });
   const verdict = checksVerdict(pr, read, REQUIRED);
   assert.equal(verdict.kind, "green");
   assert.equal(attentionOf(pr, verdict), "ready_to_merge");
-  assert.match(verdictText(pr, verdict as Extract<typeof verdict, { kind: "green" }>), /^✅ CI is green on web-app#12 \(abc1234\): required checks passed \(Dispatch Boundary, Merge Gate\); 551 of 552 checks passed\. Optional checks failed \(not required\): Migration Safety\.$/);
+  assert.match(verdictText(pr, verdict as Extract<typeof verdict, { kind: "green" }>), /^✅ CI is green on web-app#12 \(abc1234\): required checks passed \(Build, Merge Gate\); 551 of 552 checks passed\. Optional checks failed \(not required\): Docs Preview\.$/);
 });
 
 test("the first blocking failure is reported while other checks still run", () => {
@@ -92,13 +92,13 @@ test("required checks passed while optional ones still run: done", () => {
   assert.equal(verdict.kind, "green");
   assert.match(verdictText(pr, verdict as Extract<typeof verdict, { kind: "green" }>), /4 optional checks still running\.$/);
   // Required still running: pending.
-  const running = detail({ pendingCount: 4, required: [{ name: "Merge Gate", state: "pending", url: null }, { name: "Dispatch Boundary", state: "passed", url: null }] });
+  const running = detail({ pendingCount: 4, required: [{ name: "Merge Gate", state: "pending", url: null }, { name: "Build", state: "passed", url: null }] });
   assert.equal(checksVerdict(pr, running, REQUIRED).kind, "pending");
 });
 
 test("a required check that never reported blocks once everything else finished", () => {
   const pr = light();
-  const read = detail({ required: [{ name: "Merge Gate", state: "missing", url: null }, { name: "Dispatch Boundary", state: "passed", url: null }] });
+  const read = detail({ required: [{ name: "Merge Gate", state: "missing", url: null }, { name: "Build", state: "passed", url: null }] });
   const verdict = checksVerdict(pr, read, REQUIRED);
   assert.equal(verdict.kind, "failed");
   assert.match(verdictText(pr, verdict as Extract<typeof verdict, { kind: "failed" }>), /Merge Gate \(required, never reported\)/);
@@ -190,7 +190,7 @@ test("a failure in the gate's own workflow blocks; one in another workflow does 
           commit: {
             oid: "abc1234def",
             status: { contexts: [] },
-            checkSuites: { totalCount: 2, nodes: [suite(1, [{ name: "Lint", isRequired: false }], true), suite(2, [{ name: "Migration Safety", isRequired: false }], false)] },
+            checkSuites: { totalCount: 2, nodes: [suite(1, [{ name: "Lint", isRequired: false }], true), suite(2, [{ name: "Docs Preview", isRequired: false }], false)] },
           },
         },
       ],
@@ -199,8 +199,8 @@ test("a failure in the gate's own workflow blocks; one in another workflow does 
   const read = readDetail(answer, REQUIRED, pr, NOW)!;
   assert.deepEqual(
     read.failed.map((check) => [check.name, check.blocking]),
-    [["Lint", true], ["Migration Safety", false]],
+    [["Lint", true], ["Docs Preview", false]],
   );
-  assert.deepEqual(read.required?.map((check) => [check.name, check.state]), [["Dispatch Boundary", "missing"], ["Merge Gate", "failed"]]);
+  assert.deepEqual(read.required?.map((check) => [check.name, check.state]), [["Build", "missing"], ["Merge Gate", "failed"]]);
   assert.equal(checksVerdict(pr, read, REQUIRED).kind, "failed");
 });
