@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { publishNavPages } from "./nav-pages";
 import {
   experimental_useSidebarNavigation as useSidebarNavigation,
   experimental_SidebarNavigationIcon as SidebarNavigationIcon,
@@ -283,6 +284,8 @@ function SearchButton() {
 /** With Workspaces off, BB's own navigation renders unchanged. */
 export function WorkspaceNavigation(props: ExperimentalSidebarNavigationProps) {
   const { values } = useSettings();
+  const { items, actions } = useSidebarNavigation();
+  useEffect(() => publishNavPages(items, (id) => actions.activate(id, { openInSplit: false })), [items, actions]);
   if (values?.workspaces !== true) {
     const Original = props.experimental_Original;
     return <Original />;

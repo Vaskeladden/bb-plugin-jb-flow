@@ -11,7 +11,6 @@ import {
   experimental_copyToClipboard as copyToClipboard,
   experimental_usePluginId as usePluginId,
   experimental_useSidebarThreadPullRequest as useSidebarThreadPullRequest,
-  experimental_useSidebarNavigation as useSidebarNavigation,
   experimental_useSidebarThreads as useSidebarThreads,
   experimental_useThreadActions as useThreadActions,
   useBbContext,
@@ -49,6 +48,7 @@ import {
   type Shortcut,
 } from "./palette-model";
 import { resolveLanes } from "./lanes";
+import { openNavPage, useNavPages } from "./nav-pages";
 import { CATCH_UP_EVENT, buildQueue, needsYou } from "./catch-up-model";
 import { SNOOZE_PRESETS, formatWhen, parseWhen } from "./when";
 import { switchWorkspace, useSelectedWorkspace, useWorkspaces } from "./workspace-client";
@@ -368,7 +368,7 @@ export function Palette({
   const sdk = useSdk();
   const rpc = useRpc<typeof rpcContract>();
   const navigate = useBbNavigate();
-  const sidebarNav = useSidebarNavigation();
+  const navPages = useNavPages();
   const context = useBbContext();
   const pluginId = usePluginId();
   const { threads, projects, sections: threadSections } = useSidebarThreads();
@@ -702,19 +702,18 @@ export function Palette({
     );
     // Every page in the sidebar's top bar (dashboards, Studio, Automations…),
     // hidden ones too, so Cmd+K finds a dashboard by its name.
-    for (const item of sidebarNav.items) {
-      if (item.id === "__bb__/new-thread" || item.id === "__bb__/search-threads") continue;
+    for (const page of navPages) {
       entries.push({
-        id: `page:${item.id}`,
-        title: `Open ${item.label}`,
-        keywords: "dashboard page panel side view",
+        id: `page:${page.id}`,
+        title: page.label,
+        keywords: "dashboard page panel open",
         icon: <Icon name="LayoutDashboard" />,
-        run: () => sidebarNav.actions.activate(item.id, { openInSplit: false }),
+        run: () => openNavPage(page.id),
       });
     }
     return entries;
     // projectName reads projectsById, a dependency here.
-  }, [currentInfo, currentReplies, flow, rpc, navigate, composeProject, projectsById, catchUpOn, threads, selectedWorkspace, workspaceState, sidebarNav]);
+  }, [currentInfo, currentReplies, flow, rpc, navigate, composeProject, projectsById, catchUpOn, threads, selectedWorkspace, workspaceState, navPages]);
 
   // --- what to list ---
   const levelEntries: readonly Entry[] | null =
