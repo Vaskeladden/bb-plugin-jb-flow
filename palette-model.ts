@@ -282,6 +282,7 @@ export type GroupId =
   | "prs"
   | "places"
   | "actions"
+  | "pages"
   | "files"
   | "compose";
 export const GROUP_TITLE: Record<GroupId, string> = {
@@ -296,6 +297,7 @@ export const GROUP_TITLE: Record<GroupId, string> = {
   prs: "Pull requests",
   places: "Workspaces & projects",
   actions: "Actions",
+  pages: "Dashboards & pages",
   files: "Files",
   compose: "New thread",
 };
@@ -473,7 +475,7 @@ export function home(input: PaletteInput): Section[] {
 
 // --- search ------------------------------------------------------------------------
 
-const PRIORITY: GroupId[] = ["threads", "prs", "places", "actions", "messages", "archived"];
+const PRIORITY: GroupId[] = ["pages", "threads", "prs", "places", "actions", "messages", "archived"];
 /** Where a capped group's "Show all" row leads. */
 const MORE: Partial<Record<GroupId, { scope: Exclude<Scope, "all">; noun: string }>> = {
   threads: { scope: "threads", noun: "threads" },
@@ -482,6 +484,7 @@ const MORE: Partial<Record<GroupId, { scope: Exclude<Scope, "all">; noun: string
   prs: { scope: "prs", noun: "pull requests" },
   places: { scope: "places", noun: "workspaces and projects" },
   actions: { scope: "actions", noun: "actions" },
+  pages: { scope: "actions", noun: "pages" },
 };
 
 /**
@@ -601,6 +604,14 @@ export function search(input: PaletteInput, scope: Scope, raw: string): Section[
       // Moving the thread only when the query asks for it: typing a section's
       // name («bugs») to find its page must never move the current thread.
       if (/^(?:lane|section):/.test(action.id) && !tokens.some((token) => /^(?:move|mv|flytt)/i.test(token))) return;
+      // A dashboard or page whose name you typed beats any thread: it is the
+      // one place with that name. Its name must really match, not loose letters.
+      if (action.id.startsWith("page:")) {
+        const page = matchFields(tokens, [{ key: "title", text: action.title, weight: 1, strict: true }]);
+        if (page === null) return;
+        push("pages", { item: { ...item, ranges: page.ranges }, score: page.score + boost + 1000 });
+        return;
+      }
       const match = matchFields(tokens, [
         { key: "title", text: action.title, weight: 1 },
         { key: "keywords", text: action.keywords ?? "", weight: 0.6, strict: true },
@@ -622,6 +633,7 @@ export function search(input: PaletteInput, scope: Scope, raw: string): Section[
     prs: 5,
     places: 6,
     actions: 6,
+    pages: 4,
     files: 50,
     compose: 1,
   };

@@ -48,6 +48,7 @@ import {
   type Shortcut,
 } from "./palette-model";
 import { resolveLanes } from "./lanes";
+import { openNavPage, useNavPages } from "./nav-pages";
 import { CATCH_UP_EVENT, buildQueue, needsYou } from "./catch-up-model";
 import { SNOOZE_PRESETS, formatWhen, parseWhen } from "./when";
 import { switchWorkspace, useSelectedWorkspace, useWorkspaces } from "./workspace-client";
@@ -367,6 +368,7 @@ export function Palette({
   const sdk = useSdk();
   const rpc = useRpc<typeof rpcContract>();
   const navigate = useBbNavigate();
+  const navPages = useNavPages();
   const context = useBbContext();
   const pluginId = usePluginId();
   const { threads, projects, sections: threadSections } = useSidebarThreads();
@@ -697,11 +699,21 @@ export function Palette({
         icon: <Icon name="MessageSquarePlus" />,
         run: () => navigate.toCompose({ ...(composeProject ? { projectId: composeProject } : {}), focusPrompt: true }),
       },
-      { id: "studio", title: "Open Studio", keywords: "overview board", icon: <Icon name="Layers" />, run: () => navigate.toPluginPanel("studio") },
     );
+    // Every page in the sidebar's top bar (dashboards, Studio, Automations…),
+    // hidden ones too, so Cmd+K finds a dashboard by its name.
+    for (const page of navPages) {
+      entries.push({
+        id: `page:${page.id}`,
+        title: page.label,
+        keywords: "dashboard page panel open",
+        icon: <Icon name="LayoutDashboard" />,
+        run: () => openNavPage(page.id),
+      });
+    }
     return entries;
     // projectName reads projectsById, a dependency here.
-  }, [currentInfo, currentReplies, flow, rpc, navigate, composeProject, projectsById, catchUpOn, threads, selectedWorkspace, workspaceState]);
+  }, [currentInfo, currentReplies, flow, rpc, navigate, composeProject, projectsById, catchUpOn, threads, selectedWorkspace, workspaceState, navPages]);
 
   // --- what to list ---
   const levelEntries: readonly Entry[] | null =
