@@ -9,7 +9,7 @@ const PENDING = new Set(["PENDING", "QUEUED", "IN_PROGRESS", "WAITING", "REQUEST
 /** Check suites read per PR when its failures or required checks are needed. */
 export const DETAIL_SUITES = 30;
 /** PRs per light query, and per detail query. */
-export const LIGHT_BATCH = 40;
+export const LIGHT_BATCH = 60;
 export const DETAIL_BATCH = 10;
 /** Recent reviews and comments read for a PR someone waits on. */
 export const RECENT_FEEDBACK = 30;
