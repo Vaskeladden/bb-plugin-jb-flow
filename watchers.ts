@@ -7,20 +7,22 @@
 //   with "released" once a release PR merges into the base branch and its
 //   workflow runs pass. Configured per project in local.config.json.
 // - Run watcher: agents call `wait_for_run` for one GitHub Actions run (a deploy,
-//   a release job) and end their turn; the CI check also polls these runs and
-//   messages the thread once the run finishes, with the failed log.
+//   a release job) and end their turn; the GitHub hub reads the run with
+//   everything else and the thread is messaged once it finishes, with the failed log.
 // - CI watcher: agents call `wait_for_ci` instead of polling `gh` in loops; the
-//   plugin polls once for everyone and messages the thread when checks finish,
-//   reviews/comments arrive, or the PR merges. A thread that is still working
-//   is left alone; its news arrives as one message once it goes idle.
-import { execFile } from "node:child_process";
-import { existsSync } from "node:fs";
+//   hub (pr-hub.ts) reads every watched PR in one shared query and the thread
+//   is messaged when its required checks pass, a check that blocks the merge
+//   fails, reviews/comments arrive, or the PR merges. A thread that is still
+//   working is left alone; its news arrives as one message once it goes idle.
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
+import { CI_TIMEOUT_MS, runIdOf, stepCiWatch, type CiWatch } from "./ci-watch";
+import { GH_MISSING, pausedText, QuotaPausedError, type Reads } from "./github";
+import type { LightItem, RunItem } from "./hub-model";
 import { parseLimitHit } from "./limits";
-import { GH_MISSING, ghError } from "./prs";
+import type { Hub, HubView } from "./pr-hub";
 import { RELEASE_WAIT } from "./release-wait";
-import { parseRunRef, runOutcome, type RunState } from "./runs";
+import { parseRunRef, runOutcome } from "./runs";
 
 export const releaseWatchSchema = z.object({
   /** owner/name; defaults to the project's GitHub remote. */
@@ -39,56 +41,18 @@ type ThreadRef = Pick<Thread, "id" | "projectId" | "updatedAt">;
 
 const CONTINUE_DELAY_MS = 90_000;
 const RELEASE_BACKFILL_VERSION = 1;
-const CI_TIMEOUT_MS = 3 * 3_600_000;
 /** Deploys and nightly jobs run for hours; give up on a run after this. */
 const RUN_TIMEOUT_MS = 12 * 3_600_000;
-const NO_CHECKS_AFTER_MS = 10 * 60_000;
-const OK_CONCLUSIONS = new Set(["SUCCESS", "NEUTRAL", "SKIPPED"]);
 /** Thread states where CI news would only pile up in the queue. */
 const BUSY_STATUSES = new Set(["active", "starting", "stopping", "pending"]);
-/** Deploy-preview and housekeeping bots: their comments are not review feedback. */
-const BOT_LOGINS = new Set(["vercel", "github-actions", "dependabot", "linear", "changeset-bot", "codecov", "netlify", "sonarcloud"]);
-const isBot = (login: string | undefined, body: string) =>
-  login === undefined || login.endsWith("[bot]") || BOT_LOGINS.has(login) || /^\[vc\]:/.test(body);
 
-type RunWatch = { threadId: string; repo: string; runId: number; label: string; since: number };
+type RunWatch = { threadId: string; repo: string; runId: number; label: string; displayTitle?: string; since: number };
 type AutoContinue = { resetsAt: number; queuedMessageId: string | null };
 export type ThreadPrRef = { repo: string; state: string; mergedAt?: number | null };
 type ReleaseWaiter = { threadId: string; projectName: string; since: number };
 /** A release seen but not yet announced. `sha` is null for GitHub releases (nothing to wait for). */
 type Pending = { prNumber: number | null; title: string; sha: string | null; mergedAt: number; projectName: string };
 type Release = { key: string; prNumber: number | null; title: string; sha: string | null; at: number };
-type CiWatch = {
-  threadId: string;
-  repo: string;
-  pr: number;
-  watchFor: "checks" | "reviews" | "both";
-  since: number;
-  /** Reviews/comments newer than this are reported; advances after each report. */
-  reviewsSince?: number;
-  headSha: string | null;
-  /** "both" after its checks were reported: keep listening for reviews, end silently. */
-  quiet?: boolean;
-};
-
-function ghPath(): string {
-  return ["/opt/homebrew/bin/gh", "/usr/local/bin/gh"].find(existsSync) ?? "gh";
-}
-
-function gh(args: string[], timeout = 30_000): Promise<string> {
-  return new Promise((resolve, reject) => {
-    execFile(ghPath(), args, { timeout, maxBuffer: 20 * 1024 * 1024 }, (error, stdout, stderr) => {
-      if (error) reject(ghError(`gh ${args.slice(0, 3).join(" ")}`, error, stderr, 500));
-      else resolve(stdout);
-    });
-  });
-}
-
-/** "{}" for a failed lookup, but a missing gh is reported as such. */
-function orEmpty(error: Error): string {
-  if (error.message === GH_MISSING) throw error;
-  return "{}";
-}
 
 function repoSlug(remote: string | null): string | null {
   const match = remote ? /github\.com[:/]([^/]+\/[^/.]+?)(?:\.git)?$/.exec(remote) : null;
@@ -101,6 +65,8 @@ function truncate(text: string, max: number): string {
 
 export function createWatchers(
   bb: BbPluginApi,
+  reads: Reads,
+  hub: Hub,
   releaseConfig: Record<string, ReleaseWatchConfig>,
   /** Per thread: its own switch in the thread monitor, else the plugin setting. */
   autoContinueEnabled: (threadId: string) => Promise<boolean>,
@@ -263,16 +229,12 @@ export function createWatchers(
     const repo = await releaseRepo(projectName);
     if (!config || !repo) return [];
     if (config.mode === "release") {
-      const releases = JSON.parse(
-        await gh(["release", "list", "-R", repo, "-L", "10", "--json", "tagName,name,publishedAt,isDraft"]),
-      ) as Array<{ tagName: string; name: string; publishedAt: string; isDraft: boolean }>;
+      const releases = await reads.releases(repo, 10);
       return releases
         .filter((release) => !release.isDraft)
         .map((release) => ({ key: `${repo}@${release.tagName}`, prNumber: null, title: release.name || release.tagName, sha: null, at: Date.parse(release.publishedAt) }));
     }
-    const merged = JSON.parse(
-      await gh(["pr", "list", "-R", repo, "--base", config.base, "--state", "merged", "-L", "10", "--json", "number,title,mergedAt,mergeCommit"]),
-    ) as Array<{ number: number; title: string; mergedAt: string; mergeCommit: { oid: string } | null }>;
+    const merged = await reads.mergedPrs(repo, config.base, 10);
     const pattern = new RegExp(config.titlePattern, "i");
     return merged
       .filter((pr) => pattern.test(pr.title))
@@ -319,20 +281,14 @@ export function createWatchers(
     for (const [key, release] of Object.entries(pending)) {
       const repo = await releaseRepo(release.projectName);
       if (!repo) continue;
-      const runList =
+      const runs =
         release.sha === null
-          ? "[]"
-          : await gh(["run", "list", "-R", repo, "--commit", release.sha, "--json", "name,status,conclusion,url"]).catch((error) => {
+          ? []
+          : await reads.runsForCommit(repo, release.sha).catch((error) => {
               bb.log.warn(`release-watch ${key}: ${String(error)}`);
               return null;
             });
-      if (runList === null) continue;
-      const runs = JSON.parse(runList) as Array<{
-        name: string;
-        status: string;
-        conclusion: string | null;
-        url: string;
-      }>;
+      if (runs === null) continue;
       const running = runs.filter((run) => run.status !== "completed");
       const stale = Date.now() - release.mergedAt > 2 * 3_600_000;
       if (running.length > 0 && !stale) continue;
@@ -381,21 +337,26 @@ export function createWatchers(
         ? await bb.sdk.environments.get({ environmentId: thread.environmentId })
         : null;
       if (!environment?.branchName) throw new Error("No PR number given and the thread has no branch.");
-      const found = JSON.parse(
-        await gh(["pr", "view", environment.branchName, "-R", slug, "--json", "number"]).catch(orEmpty),
-      ) as { number?: number };
-      if (found.number === undefined) throw new Error(`No open PR for branch ${environment.branchName}.`);
-      pr = found.number;
+      // While the hub is paused this throws its "Paused: GitHub quota low…" text.
+      const found = await reads.openPrForBranch(slug, environment.branchName).catch((error: Error) => {
+        if (error instanceof QuotaPausedError || error.message === GH_MISSING) throw error;
+        return null;
+      });
+      if (found === null) throw new Error(`No open PR for branch ${environment.branchName}.`);
+      pr = found;
     }
     // Refuse closed/merged PRs up front: a wrong repo guess (same number, other
-    // repo) shows up here instead of as a bogus "merged" notice later.
-    const current = JSON.parse(
-      await gh(["pr", "view", String(pr), "-R", slug, "--json", "state,title,createdAt"]).catch(orEmpty),
-    ) as { state?: string; title?: string; createdAt?: string };
-    if (current.state === undefined) throw new Error(`${slug}#${pr} doesn't exist or isn't accessible. Pass repo explicitly.`);
-    if (current.state !== "OPEN") {
+    // repo) shows up here instead of as a bogus "merged" notice later. While the
+    // hub is paused the watch is kept unchecked; its first read reports a merged
+    // or closed PR.
+    const current = await reads.prSummary(slug, pr).catch((error: Error) => {
+      if (error instanceof QuotaPausedError) return "paused" as const;
+      throw error;
+    });
+    if (current === null) throw new Error(`${slug}#${pr} doesn't exist or isn't accessible. Pass repo explicitly.`);
+    if (current !== "paused" && current.state !== "OPEN") {
       throw new Error(
-        `${slug}#${pr} is already ${current.state.toLowerCase()} ("${current.title}", opened ${current.createdAt?.slice(0, 10)}). If you meant a PR in another repo, pass repo (owner/name).`,
+        `${slug}#${pr} is already ${current.state.toLowerCase()} ("${current.title}", opened ${current.createdAt.slice(0, 10)}). If you meant a PR in another repo, pass repo (owner/name).`,
       );
     }
     const key = `${threadId}:${slug}#${pr}`;
@@ -407,33 +368,13 @@ export function createWatchers(
     return watch;
   }
 
-  type PrState = {
-    state: string;
-    headRefOid: string;
-    url: string;
-    statusCheckRollup: Array<{
-      __typename: string;
-      name?: string;
-      context?: string;
-      status?: string;
-      conclusion?: string | null;
-      state?: string;
-      detailsUrl?: string;
-      targetUrl?: string;
-    }>;
-    reviews: Array<{ author: { login: string } | null; state: string; body: string; submittedAt: string }>;
-    comments: Array<{ author: { login: string } | null; body: string; createdAt: string }>;
-  };
-
-  async function failedLog(detailsUrl: string | undefined, repo: string): Promise<string> {
-    const runId = detailsUrl ? /\/actions\/runs\/(\d+)/.exec(detailsUrl)?.[1] : undefined;
-    if (!runId) return "";
-    const log = await gh(["run", "view", runId, "-R", repo, "--log-failed"], 60_000).catch(() => "");
-    const lines = log.trim().split("\n").slice(-60).map((line) => line.replace(/^[^\t]*\t[^\t]*\t/, ""));
-    return lines.length > 1 ? `\n\`\`\`\n${truncate(lines.join("\n"), 4000)}\n\`\`\`` : "";
+  async function failedLog(url: string | null, repo: string): Promise<string> {
+    const runId = runIdOf(url);
+    return runId ? reads.failedLog(repo, Number(runId)) : "";
   }
 
-  async function checkCiNow() {
+  /** After each hub cycle: what each CI watch says, from PRs read in that cycle only. */
+  async function checkCiNow(view: HubView) {
     const watches = await get<Record<string, CiWatch>>("ciWatches", {});
     // One message per thread per cycle, however many of its PRs have news.
     const outbox = new Map<string, { notes: string[]; stillWatching: boolean }>();
@@ -443,116 +384,45 @@ export function createWatchers(
     // they are until it goes idle; the first idle cycle then reports the
     // current checks and every review since the last report, in one message.
     const busy = new Map<string, boolean>();
-    let me: string | null = null;
     for (const [key, watch] of Object.entries(watches)) {
       if (!busy.has(watch.threadId)) {
         const thread = await bb.sdk.threads.get({ threadId: watch.threadId }).catch(() => null);
         busy.set(watch.threadId, thread !== null && BUSY_STATUSES.has(thread.status));
       }
       if (busy.get(watch.threadId)) continue;
-      let pr: PrState;
-      try {
-        pr = JSON.parse(
-          await gh(["pr", "view", String(watch.pr), "-R", watch.repo, "--json", "state,headRefOid,url,statusCheckRollup,reviews,comments"]),
-        ) as PrState;
-      } catch (error) {
-        // gh missing, logged out or the PR gone: give up after the usual timeout
-        // instead of warning every cycle forever.
-        if (Date.now() - watch.since > CI_TIMEOUT_MS) {
-          delete watches[key];
-          removed.add(key);
-          bb.log.warn(`ci ${key}: dropped after repeated errors: ${String(error)}`);
-        } else {
-          bb.log.warn(`ci ${key}: ${String(error)}`);
+      const light = view.pr(watch.repo, watch.pr);
+      const verdict = view.verdict(watch.repo, watch.pr);
+      if (!light || !verdict) {
+        // Not read this cycle. Paused: nothing to say. A PR GitHub keeps refusing
+        // (gone, no access) is dropped after the usual timeout instead of
+        // warning every cycle forever.
+        if (view.failed.has(`${watch.repo}#${watch.pr}`)) {
+          if (Date.now() - watch.since > CI_TIMEOUT_MS) {
+            delete watches[key];
+            removed.add(key);
+            bb.log.warn(`ci ${key}: dropped after repeated read errors`);
+          } else {
+            bb.log.warn(`ci ${key}: not readable this cycle`);
+          }
         }
         continue;
       }
-      me ??= (await gh(["api", "user", "-q", ".login"]).catch(() => "")).trim();
-      const notes: string[] = [];
-      let done = false;
-      let checksReported = false;
-
-      if (pr.state !== "OPEN") {
-        notes.push(`PR ${watch.repo.split("/")[1]}#${watch.pr} is now ${pr.state.toLowerCase()}.`);
-        done = true;
+      const step = stepCiWatch(watch, light, verdict, view.login, Date.now());
+      watches[key] = step.watch;
+      if (!step.report) continue;
+      const entry = outbox.get(watch.threadId) ?? { notes: [], stillWatching: false };
+      if (!step.done) entry.stillWatching = true;
+      if (step.notes.length === 0) {
+        delete watches[key];
+        removed.add(key);
+        continue;
       }
-      // A new push restarts the checks; keep waiting on the new head.
-      if (watch.headSha !== null && watch.headSha !== pr.headRefOid) watch.since = Date.now();
-      watch.headSha = pr.headRefOid;
-
-      if (!done && watch.watchFor !== "reviews") {
-        const checks = pr.statusCheckRollup.map((check) => ({
-          name: check.name ?? check.context ?? "check",
-          pending: check.__typename === "CheckRun" ? check.status !== "COMPLETED" : check.state === "PENDING" || check.state === "EXPECTED",
-          ok: check.__typename === "CheckRun" ? OK_CONCLUSIONS.has(check.conclusion ?? "") : check.state === "SUCCESS",
-          url: check.detailsUrl ?? check.targetUrl,
-        }));
-        if (checks.length > 0 && checks.every((check) => !check.pending)) {
-          const failed = checks.filter((check) => !check.ok);
-          if (failed.length === 0) {
-            notes.push(`✅ CI is green on ${watch.repo.split("/")[1]}#${watch.pr} (${pr.headRefOid.slice(0, 7)}): ${checks.length} checks passed.`);
-          } else {
-            const log = await failedLog(failed[0]!.url, watch.repo);
-            notes.push(
-              `❌ CI failed on ${watch.repo.split("/")[1]}#${watch.pr} (${pr.headRefOid.slice(0, 7)}): ${failed.map((check) => check.name).join(", ")}.${log}`,
-            );
-          }
-          // "both" keeps listening for reviews (review bots often answer after CI).
-          if (watch.watchFor === "both") {
-            watch.watchFor = "reviews";
-            watch.quiet = true;
-            checksReported = true;
-          } else done = true;
-        } else if (checks.length === 0 && Date.now() - watch.since > NO_CHECKS_AFTER_MS) {
-          notes.push(`${watch.repo.split("/")[1]}#${watch.pr} has no CI checks after 10 minutes; nothing to wait for.`);
-          if (watch.watchFor === "both") {
-            watch.watchFor = "reviews";
-            watch.quiet = true;
-            checksReported = true;
-          } else done = true;
-        }
-      }
-
-      let reviewNews = false;
-      if (watch.watchFor !== "checks") {
-        const cutoff = watch.reviewsSince ?? watch.since;
-        const human = (author: { login: string } | null, body: string) => author?.login !== me && !isBot(author?.login, body);
-        const reviews = pr.reviews.filter((review) => Date.parse(review.submittedAt) > cutoff && human(review.author, review.body));
-        const comments = pr.comments.filter((comment) => Date.parse(comment.createdAt) > cutoff && human(comment.author, comment.body));
-        for (const review of reviews) {
-          notes.push(`Review from ${review.author?.login ?? "someone"}: ${review.state}${review.body ? ` — ${truncate(review.body, 800)}` : ""}`);
-        }
-        for (const comment of comments) {
-          notes.push(`Comment from ${comment.author?.login ?? "someone"}: ${truncate(comment.body, 800)}`);
-        }
-        if (reviews.length + comments.length > 0) {
-          reviewNews = true;
-          notes.push(`Full comments: \`gh pr view ${watch.pr} -R ${watch.repo} --comments\`; inline: \`gh api repos/${watch.repo}/pulls/${watch.pr}/comments\``);
-          // Reviews only: done. Both: report now, keep watching the checks.
-          if (watch.watchFor === "reviews") done = true;
-        }
-      }
-
-      if (!done && Date.now() - watch.since > CI_TIMEOUT_MS) {
-        // A quiet review watch already told the agent about its checks.
-        if (!watch.quiet) notes.push(`Still waiting on ${watch.repo.split("/")[1]}#${watch.pr} after 3 hours; stopped watching. ${pr.url}`);
-        done = true;
-      }
-
-      if (done || reviewNews || checksReported) {
-        const entry = outbox.get(watch.threadId) ?? { notes: [], stillWatching: false };
-        entry.notes.push(...notes);
-        if (!done) entry.stillWatching = true;
-        if (notes.length === 0) {
-          delete watches[key];
-          removed.add(key);
-          continue;
-        }
-        outbox.set(watch.threadId, entry);
-        if (done) {
-          delete watches[key];
-          removed.add(key);
-        } else watch.reviewsSince = Date.now();
+      const log = step.logOf ? await failedLog(step.logOf.url, watch.repo) : "";
+      entry.notes.push(...step.notes.map((note, i) => (i === 0 && log ? `${note}${log}` : note)));
+      outbox.set(watch.threadId, entry);
+      if (step.done) {
+        delete watches[key];
+        removed.add(key);
       }
     }
     for (const [threadId, entry] of outbox) {
@@ -580,14 +450,19 @@ export function createWatchers(
   async function watchRun(threadId: string, run: string | number, repo?: string) {
     const thread = await bb.sdk.threads.get({ threadId });
     const ref = parseRunRef(repo && /^\d+$/.test(String(run).trim()) ? `${repo}#${run}` : run, (await projectFor(thread)).slug);
-    const current = JSON.parse(
-      await gh(["run", "view", String(ref.runId), "-R", ref.repo, "--json", "status,conclusion,name,displayTitle,url"]).catch(orEmpty),
-    ) as Partial<RunState>;
-    if (current.status === undefined) throw new Error(`Run ${ref.runId} in ${ref.repo} doesn't exist or isn't accessible.`);
-    if (current.status === "completed") {
+    // While the hub is paused the watch is kept unchecked; its first read reports a finished run.
+    const current = await reads.runSummary(ref.repo, ref.runId).catch((error: Error) => {
+      if (error instanceof QuotaPausedError) return "paused" as const;
+      throw error;
+    });
+    if (current === null) throw new Error(`Run ${ref.runId} in ${ref.repo} doesn't exist or isn't accessible.`);
+    if (current !== "paused" && current.status === "completed") {
       throw new Error(`That run already finished: ${current.conclusion} (${current.url}). Nothing to wait for.`);
     }
-    const watch: RunWatch = { threadId, repo: ref.repo, runId: ref.runId, label: current.name ?? "run", since: Date.now() };
+    const watch: RunWatch =
+      current === "paused"
+        ? { threadId, repo: ref.repo, runId: ref.runId, label: `run ${ref.runId}`, since: Date.now() }
+        : { threadId, repo: ref.repo, runId: ref.runId, label: current.name, ...(current.displayTitle ? { displayTitle: current.displayTitle } : {}), since: Date.now() };
     await update<Record<string, RunWatch>>("runWatches", {}, (all) => {
       all[`${threadId}:${ref.repo}/runs/${ref.runId}`] = watch;
     });
@@ -595,30 +470,28 @@ export function createWatchers(
     return watch;
   }
 
-  async function checkRunsNow() {
+  /** After each hub cycle: finished runs message their threads, from runs read in that cycle only. */
+  async function checkRunsNow(view: HubView) {
     const watches = await get<Record<string, RunWatch>>("runWatches", {});
     const removed = new Set<string>();
     for (const [key, watch] of Object.entries(watches)) {
       // News for a working agent would only pile up; it gets one message when idle.
       const thread = await bb.sdk.threads.get({ threadId: watch.threadId }).catch(() => null);
       if (thread !== null && BUSY_STATUSES.has(thread.status)) continue;
+      const run = view.run(watch.repo, watch.runId);
       let text: string | null = null;
-      try {
-        const run = JSON.parse(
-          await gh(["run", "view", String(watch.runId), "-R", watch.repo, "--json", "status,conclusion,name,displayTitle,url,jobs"]),
-        ) as RunState;
-        const outcome = runOutcome(run, watch.repo);
+      if (run) {
+        const outcome = runOutcome(
+          { status: run.status, conclusion: run.conclusion, name: watch.label, ...(watch.displayTitle ? { displayTitle: watch.displayTitle } : {}), url: run.url, jobs: run.failedJobs },
+          watch.repo,
+        );
         if (outcome) {
-          text = outcome.text + (outcome.failed ? await failedLog(run.url, watch.repo) : "");
+          text = outcome.text + (outcome.failed ? await reads.failedLog(watch.repo, watch.runId) : "");
         } else if (Date.now() - watch.since > RUN_TIMEOUT_MS) {
           text = `${watch.label} in ${watch.repo.split("/")[1]} is still ${run.status} after 12 hours; stopped watching. ${run.url}`;
         }
-      } catch (error) {
-        if (Date.now() - watch.since <= RUN_TIMEOUT_MS) {
-          bb.log.warn(`run ${key}: ${String(error)}`);
-          continue;
-        }
-        text = `Stopped watching run ${watch.runId} in ${watch.repo}: ${String(error)}`;
+      } else if (!view.quota.paused && view.cycleAt > 0 && Date.now() - watch.since > RUN_TIMEOUT_MS) {
+        text = `Stopped watching run ${watch.runId} in ${watch.repo}: GitHub did not return it for 12 hours.`;
       }
       if (text === null) continue;
       removed.add(key);
@@ -631,6 +504,24 @@ export function createWatchers(
       for (const key of removed) delete all[key];
     });
     changed();
+  }
+
+  /** What the hub reads for the watches: their PRs (with reviews where asked) and runs. */
+  async function interest(): Promise<{ prs: Array<LightItem & { watched: boolean }>; runs: RunItem[] }> {
+    const watches = Object.values(await get<Record<string, CiWatch>>("ciWatches", {}));
+    const runs = Object.values(await get<Record<string, RunWatch>>("runWatches", {}));
+    const prs = new Map<string, LightItem & { watched: boolean }>();
+    for (const watch of watches) {
+      const key = `${watch.repo}#${watch.pr}`;
+      const known = prs.get(key);
+      // `watched`: someone waits on its checks (a reviews-only watch needs no check details).
+      const feedback = watch.watchFor !== "checks" || (known?.feedback ?? false);
+      const watched = watch.watchFor !== "reviews" || (known?.watched ?? false);
+      prs.set(key, { repo: watch.repo, number: watch.pr, feedback, watched });
+    }
+    const seen = new Set<string>();
+    const runItems = runs.filter((run) => !seen.has(`${run.repo}/${run.runId}`) && seen.add(`${run.repo}/${run.runId}`)).map((run) => ({ repo: run.repo, runId: run.runId }));
+    return { prs: [...prs.values()], runs: runItems };
   }
 
   // --- wiring ----------------------------------------------------------------
@@ -684,29 +575,24 @@ export function createWatchers(
     },
   });
 
-  // Single flight: the schedules and `check-now` share one run, so a thread
-  // never gets the same "CI is green" twice.
+  // Single flight: the schedule and `check-now` share one run.
   let releaseRun: Promise<void> | null = null;
   const checkReleases = () => (releaseRun ??= checkReleasesNow().finally(() => (releaseRun = null)));
-  let ciRun: Promise<void> | null = null;
-  const checkCi = () => (ciRun ??= checkCiNow().finally(() => (ciRun = null)));
+  // CI and run watches act on each hub cycle; the hub runs one cycle at a time,
+  // so a thread never gets the same "CI is green" twice.
+  hub.onCycle(checkCiNow);
+  hub.onCycle(checkRunsNow);
+  /** `check-now`: one hub cycle, which also checks the CI and run watches. */
+  const checkCi = async () => {
+    await hub.cycle();
+  };
 
   bb.background.schedule("release-watch", "*/3 * * * *", async () => {
-    if (releaseRun !== null || Object.keys(releaseConfig).length === 0) return;
+    if (releaseRun !== null || Object.keys(releaseConfig).length === 0 || hub.quota().paused) return;
     const waiters = await get<Record<string, ReleaseWaiter>>("releaseWaiters", {});
     const pending = await get<Record<string, Pending>>("pendingReleases", {});
     if (Object.keys(waiters).length + Object.keys(pending).length === 0) return;
     await checkReleases();
-  });
-  bb.background.schedule("ci-watch", "*/2 * * * *", async () => {
-    if (ciRun !== null || Object.keys(await get<Record<string, CiWatch>>("ciWatches", {})).length === 0) return;
-    await checkCi();
-  });
-  let runRun: Promise<void> | null = null;
-  const checkRuns = () => (runRun ??= checkRunsNow().finally(() => (runRun = null)));
-  bb.background.schedule("run-watch", "*/2 * * * *", async () => {
-    if (runRun !== null || Object.keys(await get<Record<string, RunWatch>>("runWatches", {})).length === 0) return;
-    await checkRuns();
   });
 
   async function status() {
@@ -716,6 +602,7 @@ export function createWatchers(
       pendingReleases: await get<Record<string, Pending>>("pendingReleases", {}),
       ciWatches: await get<Record<string, CiWatch>>("ciWatches", {}),
       runWatches: await get<Record<string, RunWatch>>("runWatches", {}),
+      github: { ...hub.quota(), counters: hub.readings() },
     };
   }
 
@@ -725,16 +612,19 @@ export function createWatchers(
     const runs = await get<Record<string, RunWatch>>("runWatches", {});
     const waiters = await get<Record<string, ReleaseWaiter>>("releaseWaiters", {});
     const what = { checks: "checks", reviews: "reviews", both: "checks and reviews" } as const;
+    // While the hub is paused, every GitHub watch says so first.
+    const paused = pausedText(hub.quota());
+    const prefix = paused ? `${paused} · ` : "";
     return [
       ...Object.entries(runs)
         .filter(([, watch]) => watch.threadId === threadId)
-        .map(([key, watch]) => ({ kind: "ci" as const, key, label: `${watch.repo.split("/")[1]} · ${watch.label}` })),
+        .map(([key, watch]) => ({ kind: "ci" as const, key, label: `${prefix}${watch.repo.split("/")[1]} · ${watch.label}` })),
       ...Object.entries(watches)
         .filter(([, watch]) => watch.threadId === threadId)
         .map(([key, watch]) => ({
           kind: "ci" as const,
           key,
-          label: `${watch.repo.split("/")[1]}#${watch.pr} ${watch.quiet ? "reviews" : what[watch.watchFor]}`,
+          label: `${prefix}${watch.repo.split("/")[1]}#${watch.pr} ${watch.quiet ? "reviews" : what[watch.watchFor]}`,
         })),
       ...Object.entries(waiters)
         .filter(([, waiter]) => waiter.threadId === threadId)
@@ -759,5 +649,5 @@ export function createWatchers(
     changed();
   }
 
-  return { watchCi, watchRun, checkRuns, registerReleaseWaiter, checkReleases, checkCi, status, autoContinueAt, cancelAutoContinue, wakeupsFor, cancelWakeup, RELEASE_WAIT };
+  return { watchCi, watchRun, interest, registerReleaseWaiter, checkReleases, checkCi, status, autoContinueAt, cancelAutoContinue, wakeupsFor, cancelWakeup, RELEASE_WAIT };
 }

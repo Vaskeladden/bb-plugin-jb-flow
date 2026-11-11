@@ -2,13 +2,14 @@
 // work shows up as one unit. bb itself only links the PR for a thread's branch.
 //
 // Discovery: scan the thread's completed commands for `gh pr create` output
-// (incrementally, from a per-thread cursor), plus manual links. Status: one
-// batched GraphQL query every few minutes for all linked PRs, with stack order
-// derived from base/head branches within a repo.
-import { execFile } from "node:child_process";
-import { existsSync } from "node:fs";
+// (incrementally, from a per-thread cursor), plus manual links. Status: the
+// GitHub hub (pr-hub.ts) reads every linked PR in its shared query; this file
+// keeps the result per thread, with stack order derived from base/head
+// branches within a repo.
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
+import { attentionOf, type LightItem } from "./hub-model.ts";
+import type { Hub, HubView } from "./pr-hub";
 
 export const prAttention = z.enum([
   "merged",
@@ -82,94 +83,6 @@ export function createdPrs(item: CompletedItem | undefined): PrRef[] {
   return [];
 }
 
-/**
- * PRs to re-check once a thread's turn ends: the ones it just created, plus
- * every linked PR that was still open, draft or never fetched. A turn can
- * merge, close or push to a PR the thread already had, and the sidebar must
- * show that as soon as the turn ends, not at the next scheduled refresh.
- * Settled PRs (merged, closed) are left to the hourly re-check.
- */
-export function refsToRefreshAfterTurn(
-  linked: readonly PrRef[],
-  status: Readonly<Record<string, Pick<PrStatus, "state">>>,
-  created: readonly PrRef[],
-): PrRef[] {
-  const out = new Map<string, PrRef>();
-  for (const ref of created) out.set(key(ref), ref);
-  for (const ref of linked) {
-    const state = status[key(ref)]?.state;
-    if (state === "merged" || state === "closed") continue;
-    out.set(key(ref), ref);
-  }
-  return [...out.values()];
-}
-
-export const GH_MISSING = "The GitHub CLI (gh) isn't installed or isn't on PATH. Install it and run `gh auth login`.";
-
-/** A readable gh failure; a missing binary gets setup instructions instead of "spawn gh ENOENT". */
-export function ghError(prefix: string, error: Error & { code?: string | number | null }, stderr: string, max: number): Error {
-  if (error.code === "ENOENT") return new Error(GH_MISSING);
-  return new Error(`${prefix}: ${stderr || error.message}`.slice(0, max));
-}
-
-export function gh(args: string[], timeout = 60_000): Promise<string> {
-  const bin = ["/opt/homebrew/bin/gh", "/usr/local/bin/gh"].find(existsSync) ?? "gh";
-  return new Promise((resolve, reject) => {
-    execFile(bin, args, { timeout, maxBuffer: 20 * 1024 * 1024 }, (error, stdout, stderr) => {
-      if (error) reject(ghError("gh", error, stderr, 400));
-      else resolve(stdout);
-    });
-  });
-}
-
-/**
- * A GraphQL query through gh. GitHub answers a query with one unresolvable
- * part (an issue number, a deleted repo) with an error *and* data for every
- * other part; gh then exits non-zero. Keep that partial data.
- */
-export function ghGraphql<T>(query: string, timeout = 60_000): Promise<T> {
-  const bin = ["/opt/homebrew/bin/gh", "/usr/local/bin/gh"].find(existsSync) ?? "gh";
-  return new Promise((resolve, reject) => {
-    execFile(bin, ["api", "graphql", "-f", `query=${query}`], { timeout, maxBuffer: 20 * 1024 * 1024 }, (error, stdout, stderr) => {
-      let parsed: { data?: T | null } | null = null;
-      try {
-        parsed = JSON.parse(stdout) as { data?: T | null };
-      } catch {
-        parsed = null;
-      }
-      if (parsed?.data) resolve(parsed.data);
-      else reject(error ? ghError("gh graphql", error, stderr, 400) : new Error("gh graphql: no data"));
-    });
-  });
-}
-
-type GqlPr = {
-  number: number;
-  title: string;
-  url: string;
-  state: "OPEN" | "MERGED" | "CLOSED";
-  isDraft: boolean;
-  mergeable: "MERGEABLE" | "CONFLICTING" | "UNKNOWN";
-  reviewDecision: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED" | null;
-  baseRefName: string;
-  headRefName: string;
-  mergedAt: string | null;
-  commits: { nodes: Array<{ commit: { statusCheckRollup: { state: string } | null } }> };
-};
-
-function attentionOf(pr: GqlPr): PrStatus["attention"] {
-  if (pr.state === "MERGED") return "merged";
-  if (pr.state === "CLOSED") return "closed";
-  if (pr.isDraft) return "draft";
-  if (pr.mergeable === "CONFLICTING") return "conflicts";
-  const checks = pr.commits.nodes[0]?.commit.statusCheckRollup?.state ?? null;
-  if (checks === "FAILURE" || checks === "ERROR") return "checks_failed";
-  if (pr.reviewDecision === "CHANGES_REQUESTED") return "changes_requested";
-  if (checks === "PENDING" || checks === "EXPECTED") return "checks_pending";
-  if (pr.reviewDecision === "REVIEW_REQUIRED") return "review_requested";
-  return "ready_to_merge";
-}
-
 /** Long-lived branches: a PR *from* one of these (e.g. a dev→main release) is not a stack parent. */
 const TRUNK = /^(main|master|dev|develop|development|staging|production|prod|release([/-].*)?)$/;
 
@@ -197,7 +110,7 @@ export function orderStack(prs: PrStatus[]): PrStatus[] {
   return ordered;
 }
 
-export function createPrTracker(bb: BbPluginApi, changed: () => void) {
+export function createPrTracker(bb: BbPluginApi, changed: () => void, hub: Hub) {
   const kv = bb.storage.kv;
   // PR data lives in the plugin's own SQLite database: kv values are capped at
   // 256KB, and a busy user links hundreds of PRs a month.
@@ -289,7 +202,7 @@ export function createPrTracker(bb: BbPluginApi, changed: () => void) {
       entry.refs = entry.refs.filter((existing) => key(existing) !== key(ref));
       if (!remove) entry.refs.push(ref);
     });
-    await refresh([ref]);
+    if (!remove) await refresh();
   }
 
   /** Ids of threads that are neither archived nor deleted. */
@@ -324,93 +237,64 @@ export function createPrTracker(bb: BbPluginApi, changed: () => void) {
     return kept;
   }
 
-  /** Fetches status for the given PRs (default: all linked to active threads). */
-  let refreshLock: Promise<unknown> = Promise.resolve();
-  function refresh(only?: PrRef[], signal?: AbortSignal): Promise<void> {
-    // One at a time: each run writes the whole prStatus map.
-    const run = refreshLock.then(() => refreshNow(only, signal), () => refreshNow(only, signal));
-    refreshLock = run.catch(() => undefined);
-    return run;
-  }
-
-  async function fetchBatch(query: string): Promise<Record<string, Record<string, GqlPr | null> | null> | null> {
-    try {
-      return await ghGraphql<Record<string, Record<string, GqlPr | null> | null>>(query);
-    } catch (error) {
-      bb.log.warn(`pr refresh: ${String(error)}`);
-      return null;
-    }
-  }
-
-  async function refreshNow(only?: PrRef[], signal?: AbortSignal) {
+  /**
+   * Linked PRs the hub should read: open, draft or never read; merged and
+   * closed ones at most hourly. Pruning archived threads needs the full
+   * thread list, so it runs at most every three minutes.
+   */
+  let pruned = 0;
+  async function interest(): Promise<LightItem[]> {
     const status = await getStatus();
-    let refs = only;
-    if (refs === undefined) {
-      const all = await prune(await liveThreadIds(), status);
-      const live = new Set<string>();
-      for (const entry of Object.values(all)) {
-        for (const ref of entry.refs) {
-          const known = status[key(ref)];
-          // Merged/closed PRs are settled; re-check them at most hourly.
-          if (known && (known.state === "merged" || known.state === "closed") && Date.now() - known.checkedAt < 3_600_000) continue;
-          live.add(key(ref));
-        }
-      }
-      refs = [...live].map((value) => {
-        const [repo, number] = value.split("#");
-        return { repo: repo!, number: Number(number) };
-      });
+    const all = Date.now() - pruned > 3 * 60_000 ? await prune(await liveThreadIds(), status) : await getThreads();
+    if (Date.now() - pruned > 3 * 60_000) {
+      pruned = Date.now();
+      writeTable("pr_status", "key", status);
     }
-    for (let index = 0; index < refs.length; index += 40) {
-      // A reload waits for this; stop between batches (what's fetched so far is kept).
-      if (signal?.aborted) break;
-      const batch = refs.slice(index, index + 40);
-      const byRepo = new Map<string, number[]>();
-      for (const ref of batch) byRepo.set(ref.repo, [...(byRepo.get(ref.repo) ?? []), ref.number]);
-      const allRepos = [...byRepo.entries()];
-      const queryFor = (repos: typeof allRepos) => `query { ${repos
-        .map(([repo, numbers], r) => {
-          const [owner, name] = repo.split("/");
-          return `r${r}: repository(owner: ${JSON.stringify(owner)}, name: ${JSON.stringify(name)}) { ${numbers
-            .map((number) => `p${number}: pullRequest(number: ${number}) { ...F }`)
-            .join(" ")} }`;
-        })
-        .join(" ")} }
-        fragment F on PullRequest { number title url state isDraft mergeable reviewDecision baseRefName headRefName mergedAt
-          commits(last: 1) { nodes { commit { statusCheckRollup { state } } } } }`;
-      // One deleted repo or inaccessible PR fails the whole query; then retry
-      // repo by repo so the rest still updates.
-      const whole = await fetchBatch(queryFor(allRepos));
-      const parts: Array<[typeof allRepos, Record<string, Record<string, GqlPr | null> | null>]> = [];
-      if (whole) parts.push([allRepos, whole]);
-      else if (allRepos.length > 1) {
-        for (const single of allRepos) {
-          const data = await fetchBatch(queryFor([single]));
-          if (data) parts.push([[single], data]);
-        }
+    const live = new Map<string, LightItem>();
+    for (const entry of Object.values(all)) {
+      for (const ref of entry.refs) {
+        const known = status[key(ref)];
+        if (known && (known.state === "merged" || known.state === "closed") && Date.now() - known.checkedAt < 3_600_000) continue;
+        live.set(key(ref), { repo: ref.repo, number: ref.number, feedback: false });
       }
-      for (const [repos, data] of parts) repos.forEach(([repo, numbers], r) => {
-        for (const number of numbers) {
-          const pr = data[`r${r}`]?.[`p${number}`];
-          if (!pr) continue;
-          status[`${repo}#${number}`] = {
-            repo,
-            number,
-            title: pr.title,
-            url: pr.url,
-            state: pr.state === "MERGED" ? "merged" : pr.state === "CLOSED" ? "closed" : pr.isDraft ? "draft" : "open",
-            attention: attentionOf(pr),
-            base: pr.baseRefName,
-            head: pr.headRefName,
-            mergedAt: pr.mergedAt ? Date.parse(pr.mergedAt) : null,
-            stackedOn: null,
-            checkedAt: Date.now(),
-          };
-        }
-      });
     }
+    return [...live.values()];
+  }
+
+  /** After each hub cycle: the linked PRs it read become their thread's PR state. */
+  async function apply(view: HubView) {
+    const status = await getStatus();
+    const linked = new Set(Object.values(await getThreads()).flatMap((entry) => entry.refs.map(key)));
+    let changes = 0;
+    for (const prKey of linked) {
+      const [repo, number] = prKey.split("#");
+      const light = view.pr(repo!, Number(number));
+      const verdict = view.verdict(repo!, Number(number));
+      if (!light || !verdict) continue;
+      status[prKey] = {
+        repo: light.repo,
+        number: light.number,
+        title: light.title,
+        url: light.url,
+        state: light.state === "MERGED" ? "merged" : light.state === "CLOSED" ? "closed" : light.isDraft ? "draft" : "open",
+        attention: attentionOf(light, verdict),
+        base: light.base,
+        head: light.head,
+        mergedAt: light.mergedAt,
+        stackedOn: null,
+        checkedAt: light.readAt,
+      };
+      changes += 1;
+    }
+    if (changes === 0) return;
     writeTable("pr_status", "key", status);
     changed();
+  }
+  hub.onCycle(apply);
+
+  /** A read of every linked PR now (at most every 20 s; the hub reads them every few minutes anyway). */
+  async function refresh(): Promise<void> {
+    await hub.soon();
   }
 
   /** PRs per active thread, stack-ordered, for the UI. */
@@ -430,16 +314,13 @@ export function createPrTracker(bb: BbPluginApi, changed: () => void) {
     return prs.filter((pr) => pr.state === "open" || pr.state === "draft").map(({ repo, number }) => ({ repo, number }));
   }
 
-  // When a turn ends, its new PRs appear and its linked PRs show what the
-  // turn did to them (merged, closed, new checks) right away.
+  // When a turn ends, a PR it opened is read at once; what it did to PRs the
+  // thread already had shows at the hub's next read (within a minute while
+  // anything is watched).
   bb.events.on("thread.idle", async ({ thread }) => {
     const found = await scan(thread.id).catch(() => []);
-    const linked = (await getThreads())[thread.id]?.refs ?? [];
-    const refs = refsToRefreshAfterTurn(linked, await getStatus(), found);
-    if (refs.length > 0) await refresh(refs);
+    if (found.length > 0) await refresh();
   });
-
-  bb.background.schedule("pr-refresh", "*/3 * * * *", () => refresh());
 
   // Backfill active threads once per load, without blocking startup.
   bb.background.service("pr-backfill", {
@@ -456,10 +337,10 @@ export function createPrTracker(bb: BbPluginApi, changed: () => void) {
           if (!signal.aborted) bb.log.warn(`pr scan ${thread.id}: ${String(error)}`);
         });
       }
-      if (!signal.aborted) await refresh(undefined, signal);
+      if (!signal.aborted) await refresh();
       await new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }));
     },
   });
 
-  return { scan, link, refresh, byThread, openPrsFor };
+  return { scan, link, refresh, interest, byThread, openPrsFor };
 }

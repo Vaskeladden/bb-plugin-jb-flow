@@ -350,7 +350,7 @@ A replacement thread list. **Installing JB Flow switches your sidebar to it**: b
 
 ### Multi-PR threads (stacked and cross-repo)
 - Every PR a thread opens with `gh pr create` is linked automatically, in any repo. You can also link PRs manually.
-- One batched GitHub GraphQL query every 3 minutes keeps their state current: checks, review, conflicts, draft or merged.
+- One shared GitHub GraphQL query (every minute while CI is watched, else every 3 minutes) keeps their state current: checks, review, conflicts, draft or merged. A failed check that the base branch doesn't require (and that doesn't feed a required gate) doesn't mark the PR as failed.
 - PRs whose base branch is another PR's head are shown as a stack. Trunk branches like `dev` and `main` are ignored for this.
 - Rows show the PR that most needs attention plus a count. A **Pull requests** side-panel tab lists the stack, lets you link or unlink PRs, and starts a CI watch for all of them.
 - Threads whose PRs are all merged or closed go into a **ready to archive** group, with **Archive all**. Threads waiting on a release or CI, or in Priority, are left out.
@@ -389,7 +389,9 @@ A replacement thread list. **Installing JB Flow switches your sidebar to it**: b
   - Configure it per project with `releaseWatch` (see [Configuration](#configuration)).
 - **CI and review watcher:** agents call the `wait_for_ci` tool (or `bb jb-flow wait-ci`) and end their turn, instead of polling `gh`.
 - **Run watcher:** agents call `wait_for_run` with a GitHub Actions run id or URL (a deploy, a release job) and end their turn. The thread shows as waiting, and gets one message when the run finishes, with the failed log on failure.
-  - The plugin polls once every 2 minutes for all watches.
+  - One shared read covers every watch: it costs about one GraphQL point a minute, whatever the number of PRs or checks. Failed and required checks are read only when the check counts change.
+  - Done means: the checks the base branch requires passed, or a check that blocks the merge failed. The first blocking failure is reported at once, with its log, even while other checks still run. A failed optional check is named in the green message.
+  - Below 1,000 points left on the user's GitHub quota (any of GitHub's counters), or after GitHub refuses a request for rate limits, nothing is read until the quota resets; watches show "Paused: GitHub quota low, resumes HH:MM" and nothing is reported from a read that was not made. Rate-limit refusals are never retried.
   - It messages the thread when checks finish (with the failed log), when reviews or comments arrive, or when the PR merges.
   - A thread that is still working gets nothing. Once it goes idle, the next check sends one message with the current state of all its PRs.
 

@@ -20,6 +20,8 @@ import { createAwaiting, DECLARED_STATES, declaredState, waitsOnOthers } from ".
 import { nextMove, parseDecisionOptions } from "./decisions";
 import { createLeftovers, leftoverSchema } from "./leftovers";
 import { createFocus, focusReportSchema, needsAttention } from "./focus";
+import { createGitHub, createReads, pausedText } from "./github";
+import { createHub, type Interest } from "./pr-hub";
 import { createPrTracker, prStatusSchema, type PrStatus } from "./prs";
 import { createUnreleased, unreleasedSchema } from "./unreleased";
 import { laneSections } from "./lanes";
@@ -766,16 +768,30 @@ export default async function plugin(bb: BbPluginApi) {
 
   // Late-bound: the awaiting tracker is created below.
   const focus = createFocus(bb, () => awaiting.all(), () => findSnoozedSection());
-  const unreleased = createUnreleased(bb);
+  // Every GitHub read goes through github.ts; PRs and runs are read by the hub.
+  const github = createGitHub();
+  const reads = createReads(github);
+  // Late-bound: the PR tracker and the watchers are created below, with the hub.
+  const hub = createHub(bb, github, reads, async () => {
+    const [linked, watched] = await Promise.all([prTracker.interest(), watchers.interest()]);
+    const prs = new Map<string, Interest["prs"][number]>();
+    for (const pr of linked) prs.set(`${pr.repo}#${pr.number}`, { ...pr, watched: false });
+    for (const pr of watched.prs) {
+      const known = prs.get(`${pr.repo}#${pr.number}`);
+      prs.set(`${pr.repo}#${pr.number}`, { ...pr, feedback: pr.feedback || (known?.feedback ?? false) });
+    }
+    return { prs: [...prs.values()], runs: watched.runs, urgent: watched.prs.length + watched.runs.length > 0 };
+  });
+  const unreleased = createUnreleased(bb, reads);
   const machines = createMachines(bb);
-  const prTracker = createPrTracker(bb, changed);
-  const watchers = createWatchers(bb, localConfig.releaseWatch, async (threadId) => (await autoContinueOverrides())[threadId] ?? (await settings.get()).autoContinue, changed, async (threadId) =>
+  const prTracker = createPrTracker(bb, changed, hub);
+  const watchers = createWatchers(bb, reads, hub, localConfig.releaseWatch, async (threadId) => (await autoContinueOverrides())[threadId] ?? (await settings.get()).autoContinue, changed, async (threadId) =>
     ((await prTracker.byThread())[threadId] ?? []).map(({ repo, state, mergedAt }) => ({ repo, state, mergedAt })),
   );
   const activity = createActivity(bb, changed);
   const threadStatus = createThreadStatus(bb, changed);
   const awaiting = createAwaiting(bb, changed);
-  const gitClean = createGitClean(bb, changed);
+  const gitClean = createGitClean(bb, changed, reads);
 
   /** Watch every open PR the thread created; fall back to its branch PR. */
   async function watchThreadCi(
@@ -810,11 +826,14 @@ export default async function plugin(bb: BbPluginApi) {
     for (const [threadId, entry] of Object.entries(status.autoContinue)) {
       watching[threadId] = { kind: "continue", label: `Limit hit; auto-continues ${formatWhen(entry.resetsAt + 90_000)}` };
     }
+    // While the hub is paused, GitHub watches say so first; the "(reviews)" ending stays last.
+    const paused = pausedText(hub.quota());
+    const prefix = paused ? `${paused} · ` : "";
     for (const watch of Object.values(status.runWatches)) {
-      watching[watch.threadId] = { kind: "ci", label: `Watching ${watch.repo.split("/")[1]} · ${watch.label}` };
+      watching[watch.threadId] = { kind: "ci", label: `${prefix}Watching ${watch.repo.split("/")[1]} · ${watch.label}` };
     }
     for (const watch of Object.values(status.ciWatches)) {
-      watching[watch.threadId] = { kind: "ci", label: `Watching ${watch.repo.split("/")[1]}#${watch.pr} (${watch.watchFor})` };
+      watching[watch.threadId] = { kind: "ci", label: `${prefix}Watching ${watch.repo.split("/")[1]}#${watch.pr} (${watch.watchFor})` };
     }
     return watching;
   }
@@ -862,7 +881,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
   }
 
   const repo = createRepoCommands(bb, changed, localConfig.repoCommands);
-  const leftovers = createLeftovers(bb);
+  const leftovers = createLeftovers(bb, reads);
 
   // --- RPC ------------------------------------------------------------------
 
@@ -1191,7 +1210,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
   bb.agents.registerTool({
     name: "wait_for_ci",
     description:
-      "Wait for a GitHub PR's CI checks and/or new reviews/comments without polling. Registers a watch and returns immediately; when checks finish (with the failed log on failure), a review or comment arrives, or the PR merges/closes, a message is sent to this thread once it is idle; nothing is sent while it is still working. End your turn after calling it.",
+      "Wait for a GitHub PR's CI checks and/or new reviews/comments without polling. Registers a watch and returns immediately; when the required checks pass, a check that blocks the merge fails (at once, with its log, even while others still run), a review or comment arrives, or the PR merges/closes, a message is sent to this thread once it is idle; nothing is sent while it is still working. End your turn after calling it.",
     instructions:
       "Never poll CI or PR state in loops (no `gh pr checks --watch`, `gh run watch`, `until gh ...; sleep`, or repeated `gh pr view`). After pushing or opening a PR, call wait_for_ci (pr optional: defaults to this branch's PR) and end your turn; you'll be messaged with the result once you're idle. Nothing arrives while you keep working, so check pr_status before relying on a PR's state. For a review loop use for: \"both\".",
     parameters: z.object({
@@ -1254,7 +1273,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
   bb.agents.registerTool({
     name: "pr_status",
     description:
-      "State of every PR this thread created (any repo, stack order): checks, review decision, conflicts, draft/merged, base/head. Served from the plugin's cache, refreshed every 3 minutes; pass refresh: true for a live read. Use this instead of gh pr view / gh pr checks to check PR state.",
+      "State of every PR this thread created (any repo, stack order): checks, review decision, conflicts, draft/merged, base/head. Served from the plugin's shared GitHub read (every minute while CI is watched, else every 3 minutes); pass refresh: true to read now. Use this instead of gh pr view / gh pr checks to check PR state.",
     instructions:
       "To check the state of this thread's PRs, call pr_status (one call, all repos) instead of gh pr view / gh pr checks. Use gh only to read full review comments or logs.",
     parameters: z.object({
@@ -1267,10 +1286,14 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
       }
       const prs = (await prTracker.byThread())[ctx.threadId] ?? [];
       if (prs.length === 0) return "No PRs linked to this thread. PRs opened with gh pr create are linked automatically; others via `bb jb-flow pr-link <url> --self`.";
-      return prs
+      // While the hub is paused nothing below is fresh: say so, with when each PR was last read.
+      const paused = pausedText(hub.quota());
+      const readAt = (at: number) => new Date(at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+      const header = paused ? `${paused}. States below are from the last read before the pause.\n` : "";
+      return header + prs
         .map(
           (pr) =>
-            `${pr.stackedOn !== null ? "  └ " : ""}${pr.repo}#${pr.number} [${pr.attention}] ${pr.title} (${pr.head} → ${pr.base}) ${pr.url}`,
+            `${pr.stackedOn !== null ? "  └ " : ""}${pr.repo}#${pr.number} [${pr.attention}] ${pr.title} (${pr.head} → ${pr.base}) ${pr.url}${paused ? ` (read ${readAt(pr.checkedAt)})` : ""}`,
         )
         .join("\n");
     },

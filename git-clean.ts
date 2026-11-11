@@ -5,7 +5,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
-import { gh } from "./prs.ts";
+import type { Reads } from "./github";
 
 /** Rechecks every idle thread this often; a thread that just went idle is checked at once. */
 const SWEEP_MS = 10 * 60_000;
@@ -41,7 +41,7 @@ export function isClean(status: Status | null): boolean | null {
   return !mergeBase.hasCommittedUnmergedChanges;
 }
 
-export function createGitClean(bb: BbPluginApi, changed: () => void) {
+export function createGitClean(bb: BbPluginApi, changed: () => void, reads: Reads) {
   const kv = bb.storage.kv;
   const git = promisify(execFile);
   // A commit in a merged PR stays there, so a yes is remembered; a no is asked again later.
@@ -51,7 +51,7 @@ export function createGitClean(bb: BbPluginApi, changed: () => void) {
     const remote = (await git("git", ["-C", path, "remote", "get-url", "origin"], { timeout: 10_000 })).stdout.trim();
     const slug = /github\.com[:/]([^/]+\/[^/]+?)(?:\.git)?$/.exec(remote)?.[1];
     if (!slug) return false;
-    const yes = inMergedPr(JSON.parse(await gh(["api", `repos/${slug}/commits/${sha}/pulls`], 20_000)));
+    const yes = inMergedPr(await reads.pullsForCommit(slug, sha));
     landed.set(sha, yes);
     return yes;
   };
