@@ -377,6 +377,8 @@ A replacement thread list. **Installing JB Flow switches your sidebar to it**: b
   | Alt+Shift+D | Start dev servers |
   | Alt+Shift+P | Show pull requests |
   | Alt+Shift+W | Watch CI |
+  | Alt+Shift+U | Ask the agent for a fresh status report (the monitor's *Status*) |
+  | Alt+Shift+I | Donkey: ask the agent to explain in plain words |
   | BB's Search threads key (⌘K) | Open the JB Flow palette (see above) |
 
 ### Watchers (no polling)

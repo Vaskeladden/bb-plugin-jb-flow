@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import {
   useComposer,
   useRpc,
@@ -18,6 +18,22 @@ import { useMonitorCollapse } from "./monitor-collapse";
 import type { rpcContract } from "./server";
 import type { ThreadStatus } from "./thread-status";
 import { donkeyPrompt, revisePrompt, statusPrompt } from "./status-prompt";
+import { currentPlatform, shortcutLabel, type Shortcut } from "./palette-model";
+
+export type StatusRequestKind = "status" | "donkey";
+/** Fired by the Status and Donkey commands; the focused thread's card answers it. */
+export const STATUS_REQUEST_EVENT = "jb-flow:request-status";
+export const STATUS_REQUEST_SHORTCUTS: Record<StatusRequestKind, Shortcut> = {
+  status: { key: "u", alt: true, shift: true },
+  donkey: { key: "i", alt: true, shift: true },
+};
+
+export function requestThreadStatus(threadId: string, kind: StatusRequestKind) {
+  window.dispatchEvent(new CustomEvent(STATUS_REQUEST_EVENT, { detail: { threadId, kind }, cancelable: true }));
+}
+
+const withShortcut = (title: string, kind: StatusRequestKind) =>
+  `${title} (${shortcutLabel(STATUS_REQUEST_SHORTCUTS[kind], currentPlatform())})`;
 
 type Sdk = ReturnType<typeof useSdk>;
 type Timeline = Awaited<ReturnType<Sdk["threads"]["timeline"]>>;
@@ -485,6 +501,7 @@ function AutoPromptMenu({
 const STATUS_OUTDATED_MS = 6 * 3_600_000;
 
 export function ActivityCard({
+  threadId,
   data,
   running,
   startedAt,
@@ -511,6 +528,8 @@ export function ActivityCard({
   watches = [],
   onCancelWatch,
 }: {
+  /** The thread this card belongs to; its Status and Donkey shortcuts act only on it. */
+  threadId?: string;
   /** CI/review watches and release waits that will message this thread. */
   watches?: readonly { kind: "ci" | "release"; key: string; label: string }[];
   onCancelWatch?: (watch: { kind: "ci" | "release"; key: string }) => Promise<void>;
@@ -549,6 +568,7 @@ export function ActivityCard({
   const [clearing, setClearing] = useState(false);
   const [goalError, setGoalError] = useState<string | null>(null);
   const [requesting, setRequesting] = useState(false);
+  const inFlight = useRef(false);
   const [statusError, setStatusError] = useState<string | null>(null);
   const [togglingContinue, setTogglingContinue] = useState(false);
   const detailsId = useId();
@@ -583,7 +603,8 @@ export function ActivityCard({
   const canRequest = !active && !!onRequestStatus;
   const outdated = canRequest && outdatedReason !== null;
   const send = async (request: (() => Promise<void>) | undefined, failure: string) => {
-    if (!request) return;
+    if (!request || inFlight.current) return;
+    inFlight.current = true;
     setRequesting(true);
     setStatusError(null);
     try {
@@ -591,12 +612,30 @@ export function ActivityCard({
     } catch {
       setStatusError(failure);
     } finally {
+      inFlight.current = false;
       setRequesting(false);
     }
   };
   const requestStatus = () => send(onRequestStatus, "Could not request status. Try again.");
   const requestDonkey = () => send(onRequestDonkey, "Could not ask for the explanation. Try again.");
   const requestRevise = () => send(onRequestRevise, "Could not ask for the revision. Try again.");
+  const shortcutTargets = useRef({ status: requestStatus, donkey: requestDonkey, canRequest, hasDonkey: !!onRequestDonkey });
+  shortcutTargets.current = { status: requestStatus, donkey: requestDonkey, canRequest, hasDonkey: !!onRequestDonkey };
+  useEffect(() => {
+    if (!threadId) return;
+    const onRequest = (event: Event) => {
+      const detail = (event as CustomEvent<{ threadId?: string; kind?: StatusRequestKind }>).detail;
+      if (event.defaultPrevented || detail?.threadId !== threadId) return;
+      const targets = shortcutTargets.current;
+      // Same rules as the buttons: only while they show, and one request at a time.
+      if (!targets.canRequest || inFlight.current) return;
+      if (detail.kind === "donkey" && !targets.hasDonkey) return;
+      event.preventDefault();
+      void (detail.kind === "donkey" ? targets.donkey() : targets.status());
+    };
+    window.addEventListener(STATUS_REQUEST_EVENT, onRequest);
+    return () => window.removeEventListener(STATUS_REQUEST_EVENT, onRequest);
+  }, [threadId]);
   const steps = tasks.flatMap((task) => task.workflow?.agents ?? []);
   const finishedSteps = steps.filter(
     (step) => step.state === "done" || step.state === "skipped",
@@ -666,7 +705,7 @@ export function ActivityCard({
             className={outdated ? "jf-monitor-update" : "jf-monitor-update jf-monitor-update-quiet"}
             disabled={requesting}
             onClick={requestStatus}
-            title="Ask the agent for a fresh status report"
+            title={withShortcut("Ask the agent for a fresh status report", "status")}
           >
             {requesting ? "Requesting…" : "Status"}
           </button>
@@ -677,7 +716,10 @@ export function ActivityCard({
             className="jf-monitor-update jf-monitor-update-quiet"
             disabled={requesting}
             onClick={requestDonkey}
-            title="Ask the agent what the real problem is, in plain words with an example, and for decisions you can answer with a click"
+            title={withShortcut(
+              "Ask the agent what the real problem is, in plain words with an example, and for decisions you can answer with a click",
+              "donkey",
+            )}
           >
             Donkey
           </button>
@@ -1149,6 +1191,7 @@ export function LiveActivityBanner({
   return (
     <ActivityCard
       key={threadId}
+      threadId={threadId}
       data={activity}
       hasLiveData={!!data}
       idleLabel={
