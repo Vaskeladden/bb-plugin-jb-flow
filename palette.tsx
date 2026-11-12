@@ -177,7 +177,8 @@ type Entry = {
   thread?: boolean;
   /** Always first, unfiltered: built from what you typed. */
   pinned?: boolean;
-  run?: () => unknown;
+  /** secondary: ⌘↵ / ⌘-click, which opens in a split where that means something. */
+  run?: (secondary: boolean) => unknown;
   /** Opens a sub-list instead of running. */
   open?: () => Mode;
   /** The query a sub-list starts with. */
@@ -702,7 +703,7 @@ export function Palette({
         title: page.label,
         keywords: "dashboard page panel open",
         icon: <Icon name="LayoutDashboard" />,
-        run: () => openNavPage(page.id),
+        run: (secondary) => openNavPage(page.id, secondary),
       });
     }
     return entries;
@@ -873,7 +874,7 @@ export function Palette({
           enter(entry.open(), entry.query);
           return;
         }
-        if (entry.run) done(entry.run);
+        if (entry.run) done(() => entry.run!(secondary));
       }
     }
   };

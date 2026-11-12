@@ -458,7 +458,7 @@ describe("palette preview", () => {
     const page = (id: string, label: string) =>
       ({ id, label, icon: { kind: "plugin", pluginId: "x", icon: null }, action: { kind: "plugin" }, isDisabled: false, isVisible: false, isLoading: false, pluginId: "x", shortcut: null, badge: null }) as never;
     const opened: string[] = [];
-    publishNavPages([page("__bb__/new-thread", "New thread"), page("vaskeladden-bb/errors", "Errors")], (id) => opened.push(id));
+    publishNavPages([page("__bb__/new-thread", "New thread"), page("vaskeladden-bb/errors", "Errors")], (id, split) => opened.push(`${id}:${split}`));
     const slot = await mount({ threads: [...threads, thread("e", "Errors in billing")] });
     const input = await openPalette(slot);
     fireEvent.change(input, { target: { value: "errors" } });
@@ -467,7 +467,13 @@ describe("palette preview", () => {
     const row = slot.getAllByRole("option")[0]!;
     expect(row.textContent).not.toContain("billing");
     fireEvent.click(row);
-    await waitFor(() => expect(opened).toEqual(["vaskeladden-bb/errors"]));
+    await waitFor(() => expect(opened).toEqual(["vaskeladden-bb/errors:false"]));
+    // ⌘↵ opens it beside the current view, like ⌘-clicking its icon.
+    const again = await openPalette(slot);
+    fireEvent.change(again, { target: { value: "errors" } });
+    await waitFor(() => expect(options(slot)[0]).toContain("Errors"));
+    fireEvent.keyDown(again, { key: "Enter", metaKey: true });
+    await waitFor(() => expect(opened).toContain("vaskeladden-bb/errors:true"));
     publishNavPages([], () => {});
   });
 

@@ -285,7 +285,7 @@ function SearchButton() {
 export function WorkspaceNavigation(props: ExperimentalSidebarNavigationProps) {
   const { values } = useSettings();
   const { items, actions } = useSidebarNavigation();
-  useEffect(() => publishNavPages(items, (id) => actions.activate(id, { openInSplit: false })), [items, actions]);
+  useEffect(() => publishNavPages(items, (id, split) => actions.activate(id, { openInSplit: split })), [items, actions]);
   if (values?.workspaces !== true) {
     const Original = props.experimental_Original;
     return <Original />;
