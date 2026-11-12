@@ -24,6 +24,8 @@ export type RunState = {
   displayTitle?: string;
   url: string;
   jobs?: Array<{ name: string; conclusion: string | null }>;
+  /** Failed jobs beyond those listed. */
+  jobsMore?: number;
 };
 
 const OK = new Set(["success", "neutral", "skipped"]);
@@ -36,6 +38,7 @@ export function runOutcome(run: RunState, repo: string): { failed: boolean; text
   const failedJobs = (run.jobs ?? [])
     .filter((job) => job.conclusion !== null && !OK.has(job.conclusion))
     .map((job) => job.name);
-  const jobs = failedJobs.length > 0 ? ` Failed: ${failedJobs.join(", ")}.` : "";
+  const more = run.jobsMore ? ` and ${run.jobsMore} more` : "";
+  const jobs = failedJobs.length > 0 ? ` Failed: ${failedJobs.join(", ")}${more}.` : "";
   return { failed: true, text: `❌ ${where} finished: ${run.conclusion ?? "unknown"}.${jobs} ${run.url}` };
 }

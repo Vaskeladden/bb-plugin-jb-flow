@@ -60,7 +60,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test when.test.ts limits.test.ts prs.test.ts awaiting.test.ts turn-reply.test.ts git-clean.test.ts decisions.test.ts releases.test.ts runs.test.ts unreleased.test.ts lanes.test.ts studio-model.test.ts palette-model.test.ts catch-up-model.test.ts generic.test.ts && npm run test:ui",
+    "test": "node --experimental-strip-types --test when.test.ts limits.test.ts prs.test.ts awaiting.test.ts turn-reply.test.ts git-clean.test.ts decisions.test.ts releases.test.ts runs.test.ts github.test.ts hub-model.test.ts pr-hub.test.ts watchers.test.ts ci-watch.test.ts unreleased.test.ts lanes.test.ts studio-model.test.ts palette-model.test.ts catch-up-model.test.ts generic.test.ts && npm run test:ui",
     "test:ui": "vitest run"
   },
   "license": "MIT",
