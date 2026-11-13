@@ -1,3 +1,5 @@
+import { idleFor, THREAD_STATE_LABEL, type ThreadStateId } from "./thread-states";
+
 /** Longest prompt Update status or Donkey may send into a thread (the thread_reply contract). */
 export const THREAD_REPLY_MAX = 8000;
 
@@ -112,6 +114,82 @@ export function donkeyPrompt(setting: unknown): string {
 
 export function statusPrompt(setting: unknown): string {
   return typeof setting === "string" && setting.trim() !== "" ? setting : DEFAULT_STATUS_PROMPT;
+}
+
+/** A thread below the one asked for status, with what bb knows about it. */
+export type ChildThread = {
+  id: string;
+  title: string;
+  /** The thread it was started from, when that is not the thread asked. */
+  under: string | null;
+  state: ThreadStateId;
+  reason: string;
+  goal: string;
+  next: string;
+  blocked: string;
+  /** Start of its last reply, for a child that never wrote a report. */
+  latest: string;
+  /** When it last reported or replied; null when it never did. */
+  heardAt: number | null;
+};
+
+/** Most child threads a status request lists; the rest are counted. */
+export const CHILD_ROWS_MAX = 30;
+// Those that wait for me first; finished ones are the first to be left out.
+const CHILD_ORDER: readonly ThreadStateId[] = ["needs", "running", "autopilot", "parked", "ready", "done"];
+const brief = (text: string, max: number) => {
+  const flat = text.replace(/\s+/g, " ").trim();
+  return flat.length > max ? `${flat.slice(0, max - 1).trimEnd()}…` : flat;
+};
+
+/**
+ * What a status request adds in a thread that has child threads: each child's
+ * state and last report, and how to weigh them. Empty without children.
+ */
+export function childrenSection(parentId: string, children: readonly ChildThread[], now: number = Date.now()): string {
+  if (children.length === 0) return "";
+  const sorted = [...children].sort((a, b) => CHILD_ORDER.indexOf(a.state) - CHILD_ORDER.indexOf(b.state));
+  const listed = sorted.slice(0, CHILD_ROWS_MAX);
+  const counts = CHILD_ORDER.map((state) => [state, children.filter((child) => child.state === state).length] as const)
+    .filter(([, count]) => count > 0)
+    .map(([state, count]) => `${count} ${THREAD_STATE_LABEL[state]}`)
+    .join(" · ");
+  const row = (child: ChildThread) => {
+    const parts = [`${child.id} "${brief(child.title, 70) || "Untitled"}"`, `${THREAD_STATE_LABEL[child.state]} (${brief(child.reason, 90)})`];
+    if (child.under !== null) parts.push(`started from ${child.under}`);
+    if (child.state !== "done") {
+      if (child.goal) parts.push(`Goal: ${brief(child.goal, 110)}`);
+      if (child.next) parts.push(`Next: ${brief(child.next, 130)}`);
+      if (child.blocked) parts.push(`Blocked: ${brief(child.blocked, 130)}`);
+      if (!child.goal && !child.next && child.latest) parts.push(`Last said: ${brief(child.latest, 160)}`);
+      parts.push(child.heardAt === null ? "no reply yet" : `heard ${idleFor(now - child.heardAt)} ago`);
+    }
+    return `- ${parts.join(" · ")}`;
+  };
+  const left = sorted.length - listed.length;
+  return [
+    "---",
+    "",
+    "This thread has child threads, and I steer them from here. So this report covers them too.",
+    "",
+    `What bb knows about them now (state, why, and what each last reported). ${children.length} child ${children.length === 1 ? "thread" : "threads"}: ${counts}.`,
+    "",
+    ...listed.map(row),
+    ...(left > 0 ? [`- ${left} more not listed, the least urgent ones. \`bb thread list --parent-thread ${parentId}\` lists them all.`] : []),
+    "",
+    "How to use it:",
+    "- The list can be old or thin. For a child that is not done and whose line does not tell you where it stands, read its last reply with `bb thread output <id>` before you write. Only read: do not message a child to write this report.",
+    "- **Goal**, **Done**, **Next** and **Blocked** are about the whole job: this thread and its children together. **State** is still about this thread alone.",
+    "- Under `### Progress`, after your own milestones, give each child that is not done its own line, named by what it does in a few plain words. Count the finished ones in one line (\"14 of 29 child threads done\").",
+    "- Add a section `### Children` between Progress and Next steps. One line per child that is not done, those that wait for me first: `**<what it does>** · <state> · <what it does now, or what it waits for>`. End with one line for the finished ones.",
+    "- Under `### Next steps`, include what moves the children: answer a child's question, tell one to go on, ship one's pull request, stop one nobody needs. Name the child in each step. When I reply go, do those steps by messaging the child (`bb thread tell <id> '<message>'`). Do not message them before that.",
+  ].join("\n");
+}
+
+/** What the Status button sends: the report prompt, plus the child threads when the thread has any. */
+export function statusRequest(setting: unknown, parentId: string, children: readonly ChildThread[], now: number = Date.now()): string {
+  const section = childrenSection(parentId, children, now);
+  return section ? `${statusPrompt(setting)}\n\n${section}` : statusPrompt(setting);
 }
 
 /**

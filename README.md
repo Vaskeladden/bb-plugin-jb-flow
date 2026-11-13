@@ -229,6 +229,9 @@ to stop it.
 
 **Update status** sends the **Status report prompt** setting to this thread (empty uses a short
 built-in prompt in that format), preserving your composer draft. It runs only when clicked.
+In a thread with child threads, the request also lists every child (and their children) with its state and
+last report, and asks for one report on the whole job: progress per child, a **Children** section, and next
+steps that steer them. The agent messages a child only after you reply go.
 To skip the button, turn on **Status report at hand-back**: agents then end every reply that hands the
 thread back to you (done, blocked, or waiting for your input) with that report, and the monitor keeps itself
 current. Threads pick it up when their session next starts.

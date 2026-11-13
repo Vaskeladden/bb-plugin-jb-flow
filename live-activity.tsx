@@ -17,7 +17,7 @@ import "./live-activity.css";
 import { useMonitorCollapse } from "./monitor-collapse";
 import type { rpcContract } from "./server";
 import type { ThreadStatus } from "./thread-status";
-import { donkeyPrompt, revisePrompt, statusPrompt } from "./status-prompt";
+import { donkeyPrompt, revisePrompt } from "./status-prompt";
 import { currentPlatform, shortcutLabel, type Shortcut } from "./palette-model";
 
 export type StatusRequestKind = "status" | "donkey";
@@ -1210,7 +1210,7 @@ export function LiveActivityBanner({
       watches={wakeups.state?.watches ?? []}
       onCancelWatch={wakeups.cancel}
       onRequestStatus={async () => {
-        await rpc.call("thread_reply", { threadId, text: statusPrompt(values?.statusPrompt) });
+        await rpc.call("thread_status_request", { threadId });
       }}
       onRequestDonkey={async () => {
         await rpc.call("thread_reply", { threadId, text: donkeyPrompt(values?.donkeyPrompt) });

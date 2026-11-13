@@ -490,6 +490,7 @@ it("keeps a dated idle report and milestone bars with newer replies in Details",
 });
 it("requests the actual Status prompt only on click and leaves the composer draft untouched", async () => {
   const request = vi.fn(async () => ({ ok: true }));
+  const status = vi.fn(async () => ({ ok: true, children: 0 }));
   const slot = renderSlot(
     { component: LiveActivityBanner },
     { runningSince: {} },
@@ -510,22 +511,19 @@ it("requests the actual Status prompt only on click and leaves the composer draf
           }),
         },
       },
-      rpc: { thread_status: () => savedMonitor, thread_reply: request },
+      rpc: { thread_status: () => savedMonitor, thread_reply: request, thread_status_request: status },
     },
   );
   await slot.findByText("Review the design");
   expect(request).not.toHaveBeenCalled();
+  expect(status).not.toHaveBeenCalled();
+  // The server writes the request, so it can add the thread's child threads.
   fireEvent.click(slot.getByRole("button", { name: "Status" }));
+  await waitFor(() => expect(status).toHaveBeenCalledTimes(1));
+  expect(status.mock.calls[0]).toEqual([{ threadId: "t1" }]);
+  fireEvent.click(slot.getByRole("button", { name: "Donkey" }));
   await waitFor(() => expect(request).toHaveBeenCalledTimes(1));
   expect(request.mock.calls[0]).toEqual([
-    expect.objectContaining({
-      threadId: "t1",
-      text: expect.stringContaining("**Goal:**"),
-    }),
-  ]);
-  fireEvent.click(slot.getByRole("button", { name: "Donkey" }));
-  await waitFor(() => expect(request).toHaveBeenCalledTimes(2));
-  expect(request.mock.calls[1]).toEqual([
     expect.objectContaining({
       threadId: "t1",
       text: expect.stringContaining("**Decision needed:**"),
@@ -551,7 +549,7 @@ it("answers the Status and Donkey shortcuts for the focused thread, one request 
           timeline: async () => ({ ...snapshot, activeBackgroundCommands: [], pendingTodos: null }),
         },
       },
-      rpc: { thread_status: () => savedMonitor, thread_reply: request },
+      rpc: { thread_status: () => savedMonitor, thread_reply: request, thread_status_request: request },
     },
   );
   await slot.findByText("Review the design");
@@ -563,9 +561,7 @@ it("answers the Status and Donkey shortcuts for the focused thread, one request 
 
   act(() => requestThreadStatus("t1", "status"));
   await waitFor(() => expect(request).toHaveBeenCalledTimes(1));
-  expect(request.mock.calls[0]).toEqual([
-    expect.objectContaining({ threadId: "t1", text: expect.stringContaining("**Goal:**") }),
-  ]);
+  expect(request.mock.calls[0]).toEqual([{ threadId: "t1" }]);
   act(() => requestThreadStatus("t1", "donkey"));
   expect(request).toHaveBeenCalledTimes(1);
 
@@ -593,7 +589,7 @@ it("ignores the shortcuts while the agent is working", async () => {
           timeline: async () => ({ ...snapshot, activeBackgroundCommands: [], pendingTodos: null }),
         },
       },
-      rpc: { thread_status: () => savedMonitor, thread_reply: request },
+      rpc: { thread_status: () => savedMonitor, thread_reply: request, thread_status_request: request },
     },
   );
   await slot.findByRole("region", { name: "Agent activity" });

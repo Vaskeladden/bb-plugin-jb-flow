@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { expect, it } from "vitest";
-import { DEFAULT_DONKEY_PROMPT, DEFAULT_REVISE_PROMPT, DEFAULT_STATUS_PROMPT, handBackInstructions, THREAD_REPLY_MAX } from "./status-prompt";
+import { CHILD_ROWS_MAX, childrenSection, DEFAULT_DONKEY_PROMPT, DEFAULT_REVISE_PROMPT, DEFAULT_STATUS_PROMPT, handBackInstructions, statusRequest, THREAD_REPLY_MAX, type ChildThread } from "./status-prompt";
 import {
   createFakePluginHost,
   makeThreadResponse,
@@ -274,4 +274,77 @@ it("a report with nothing pending is done, not Needs me, unless it asks a decisi
   expect(reportsNothingPending(offers)).toBe(true);
   expect(reportsNothingPending(parseStatusReport("**Goal:** A\n\n**Done:** B\n\n**Next:** Merge the PR", 1))).toBe(false);
   expect(reportsNothingPending(null)).toBe(false);
+});
+
+const child = (over: Partial<ChildThread>): ChildThread => ({
+  id: "thr_a",
+  title: "Billing export",
+  under: null,
+  state: "ready",
+  reason: "nothing pending",
+  goal: "",
+  next: "",
+  blocked: "",
+  latest: "",
+  heardAt: null,
+  ...over,
+});
+
+it("asks a thread without children for the plain report", () => {
+  expect(statusRequest("", "thr_parent", [])).toBe(DEFAULT_STATUS_PROMPT);
+  expect(childrenSection("thr_parent", [])).toBe("");
+});
+
+it("adds each child's state and last report when the thread has children", () => {
+  const now = 10 * 60 * 60_000;
+  const text = statusRequest(
+    "",
+    "thr_parent",
+    [
+      child({ id: "thr_done", title: "Old import", state: "done", reason: "nothing pending", goal: "Import runs", heardAt: now }),
+      child({
+        id: "thr_ask",
+        title: "Billing   export",
+        state: "needs",
+        reason: "asked you a question",
+        goal: "Export every invoice",
+        next: "Wait for your answer",
+        blocked: "Which date format?",
+        heardAt: now - 2 * 60 * 60_000,
+      }),
+      child({ id: "thr_deep", title: "", under: "thr_ask", state: "running", reason: "agent working", latest: "Reading the schema now." }),
+    ],
+    now,
+  );
+  // The report format still leads, so whatever reads the request recognises it.
+  expect(text.startsWith(DEFAULT_STATUS_PROMPT)).toBe(true);
+  expect(text).toContain("3 child threads: 1 Needs me · 1 Running · 1 Done.");
+  const rows = text.split("\n").filter((line) => line.startsWith("- thr_"));
+  // Those that wait for the user come first, finished ones last and without their old report.
+  expect(rows).toEqual([
+    '- thr_ask "Billing export" · Needs me (asked you a question) · Goal: Export every invoice · Next: Wait for your answer · Blocked: Which date format? · heard 2 h ago',
+    '- thr_deep "Untitled" · Running (agent working) · started from thr_ask · Last said: Reading the schema now. · no reply yet',
+    '- thr_done "Old import" · Done (nothing pending)',
+  ]);
+  expect(text).toContain("### Children");
+  expect(text).toContain("bb thread tell <id>");
+});
+
+it("keeps a custom status prompt and still adds the children", () => {
+  const text = statusRequest("Just say where we are.", "thr_parent", [child({})]);
+  expect(text.startsWith("Just say where we are.\n\n---")).toBe(true);
+  expect(text).toContain("1 child thread: 1 Ready.");
+});
+
+it("lists the most urgent children and counts the rest", () => {
+  const many = [
+    ...Array.from({ length: CHILD_ROWS_MAX + 4 }, (_, index) => child({ id: `thr_done${index}`, state: "done" })),
+    child({ id: "thr_ask", state: "needs", reason: "asked you a question" }),
+  ];
+  const text = childrenSection("thr_parent", many);
+  const rows = text.split("\n").filter((line) => line.startsWith("- thr_"));
+  expect(rows).toHaveLength(CHILD_ROWS_MAX);
+  expect(rows[0]).toContain("thr_ask");
+  expect(text).toContain("- 5 more not listed, the least urgent ones. `bb thread list --parent-thread thr_parent` lists them all.");
+  expect(text).toContain(`${CHILD_ROWS_MAX + 5} child threads: 1 Needs me · ${CHILD_ROWS_MAX + 4} Done.`);
 });
