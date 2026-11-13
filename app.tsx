@@ -1,3 +1,4 @@
+import { useSectionFilter } from "./use-section-filter";
 import "./flow-ui.css";
 import { mountWorkspaceTopBar } from "./workspace-topbar";
 import { toast } from "sonner";
@@ -76,6 +77,7 @@ import {
 import {
   ContextMenu,
   ContextMenuContent,
+  ContextMenuCheckboxItem,
   ContextMenuItem,
   ContextMenuSeparator,
   ContextMenuShortcut,
@@ -923,6 +925,7 @@ function GroupHeader({
   menu,
   onDragStart,
   auto,
+  sectionFilterAction,
 }: {
   title: string;
   count: number;
@@ -938,6 +941,7 @@ function GroupHeader({
   /** Makes the header draggable to reorder sections. */
   onDragStart?: (event: ReactPointerEvent<HTMLElement>) => void;
   auto?: boolean;
+  sectionFilterAction?: { label: string; run: () => void };
 }) {
   const header = (
     <div data-jb-flow-section-header="" onPointerDown={onDragStart} className="group/header flex w-full items-center gap-1 px-2 pb-1 pt-2 text-xs font-medium text-muted-foreground">
@@ -960,6 +964,11 @@ function GroupHeader({
           <kbd className="rounded border border-border px-1 text-[10px] font-normal leading-4 opacity-0 group-hover/header:opacity-100">{hint}</kbd>
         ) : null}
       </button>
+      {sectionFilterAction ? (
+        <button type="button" onPointerDown={(event) => event.stopPropagation()} onClick={sectionFilterAction.run}
+          className={cn("jf-group-action rounded px-1 text-[11px] hover:bg-accent focus-visible:opacity-100", sectionFilterAction.label === "Bare" && "opacity-0 group-hover/header:opacity-100")}
+        >{sectionFilterAction.label}</button>
+      ) : null}
       {action ? (
         <button type="button" onClick={action.run} className="jf-group-action rounded px-1 text-[11px] text-foreground/70 opacity-0 hover:bg-accent hover:text-foreground group-hover/header:opacity-100">
           {action.label}
@@ -1383,6 +1392,13 @@ function TriageThreadList({
     [lanes, otherSections],
   );
   const sectionKeys = useMemo(() => fullOrder.filter((key) => visibleKeys.has(key)), [fullOrder, visibleKeys]);
+  // Stable section IDs, independent of state filters, collapse state and lane roles.
+  const filterOptions = [
+    ...lanes.map((lane) => ({ id: sectionKey(lane.sectionId), title: lane.title })),
+    ...otherSections.map((section) => ({ id: section.id, title: section.name })),
+    { id: "snoozed", title: "Snoozed" },
+  ];
+  const sectionFilter = useSectionFilter(filterOptions.map((option) => option.id));
   // A section the saved order lacks (new, or never placed) is written into it
   // once, where it shows now, so its place cannot drift later.
   useEffect(() => {
@@ -1413,6 +1429,18 @@ function TriageThreadList({
     const setProject = (next: string | null) => void rpc.call("section_project_set", { section: key, projectId: next });
     return (
       <>
+        <ContextMenuSub>
+          <ContextMenuSubTrigger>Seksjoner</ContextMenuSubTrigger>
+          <ContextMenuSubContent>
+            {filterOptions.map((option) => (
+              <ContextMenuCheckboxItem key={option.id} checked={sectionFilter.isOn(option.id)} onCheckedChange={() => sectionFilter.toggle(option.id)}>
+                {option.title}
+              </ContextMenuCheckboxItem>
+            ))}
+            <ContextMenuItem onSelect={sectionFilter.showAll}>Vis alle</ContextMenuItem>
+          </ContextMenuSubContent>
+        </ContextMenuSub>
+        <ContextMenuSeparator />
         <ContextMenuItem
           onSelect={() =>
             actions.openNewThread({
@@ -1553,7 +1581,7 @@ function TriageThreadList({
           {
             id: smart,
             title: `On ${host ? machineLabel(host.name) : "machine"}`,
-            threads: awake,
+            threads: awake.filter((thread) => thread.isPinned || sectionFilter.isOn(sectionKey(thread.sectionId))),
             dynamic: { glyph: "terminal", tone: "text-slate-400" },
           },
         ] satisfies Group[],
@@ -1567,9 +1595,11 @@ function TriageThreadList({
     // never the open thread).
     if (smart !== null) {
       const entry = SMART.find((candidate) => candidate.id === smart)!;
-      const members = awake;
+      const members = awake.filter((thread) => !thread.isPinned);
       const inSection = (key: string, thread: PluginSidebarThread) => sectionKey(thread.sectionId) === key;
       const filtered: Group[] = [];
+      const pinned = awake.filter((thread) => thread.isPinned);
+      if (pinned.length) filtered.push({ id: "pinned", title: "Pinned", threads: pinned });
       for (const key of sectionKeys) {
         const lane = lanes.find((candidate) => sectionKey(candidate.sectionId) === key);
         const section = lane ? null : otherSections.find((candidate) => candidate.id === key);
@@ -1656,7 +1686,7 @@ function TriageThreadList({
       dynamic: { glyph: "alarm", tone: "text-muted-foreground" },
     });
     return { groups: result, smartCounts, machineCounts, treeNodes };
-  }, [threads, allThreads, sections, lanes, otherSections, state, tags, tagFilter, smart, rpc, sectionKeys, activeThreadId, machines]);
+  }, [threads, allThreads, sections, lanes, otherSections, state, tags, tagFilter, smart, rpc, sectionKeys, activeThreadId, machines, sectionFilter.isOn]);
 
   const defaults = useMemo(
     () =>
@@ -1756,8 +1786,17 @@ function TriageThreadList({
       ) : null}
       {/* Before the groups: a new install has no sections, so no "Your sections" divider to hang it on. */}
       <MissingLanesHint sections={sections} pinned={state?.laneSections ?? {}} />
+      {sectionFilter.filtering ? (
+        <div className="px-2 py-1 text-xs text-muted-foreground" data-jb-section-filter="">
+          {sectionFilter.shown.length === 1 ? `Bare ${filterOptions.find((option) => option.id === sectionFilter.shown[0])?.title}` : "Seksjoner skjult"}
+          {" · "}<button type="button" className="underline hover:text-foreground" onClick={sectionFilter.showAll}>Vis alle</button>
+        </div>
+      ) : null}
       {groups.map((group) => {
-        const keepEmpty =
+        const filterKey = group.section ? sectionKey(group.section.id) : group.id === "snoozed" ? "snoozed" : null;
+        if (filterKey !== null && !sectionFilter.isOn(filterKey)) return null;
+        if (group.id.startsWith("smart:") && !sectionFilter.isOn(sectionKey(null))) return null;
+        const keepEmpty = group.section !== undefined ||
           group.id === "needs-me" || group.id.startsWith("smart:") || group.id.startsWith("section:") || group.firstUserGroup;
         if (group.threads.length === 0 && !keepEmpty) return null;
         const collapsed = group.id.startsWith("smart:") ? false : isCollapsed(group.id);
@@ -1802,6 +1841,10 @@ function TriageThreadList({
               collapsed={collapsed}
               onToggle={() => toggle(group.id)}
               action={group.action}
+              sectionFilterAction={filterKey === null ? undefined : {
+                label: sectionFilter.isOnly(filterKey) ? "Alle" : "Bare",
+                run: () => sectionFilter.isOnly(filterKey) ? sectionFilter.showAll() : sectionFilter.only(filterKey),
+              }}
               hint={group.hint}
               dynamic={group.dynamic}
               menu={sectionMenu(group)}
