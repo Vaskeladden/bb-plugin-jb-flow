@@ -23,7 +23,6 @@ export default defineConfig({
       "catch-up.ui.test.tsx",
       "row-status.ui.test.tsx",
       "thread-tree.ui.test.tsx",
-      "section-filter.ui.test.tsx",
     ],
   },
 });

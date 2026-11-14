@@ -330,7 +330,6 @@ A replacement thread list. **Installing JB Flow switches your sidebar to it**: b
   - copy link or ID
   - archive, delete
 - Drag a row into the main area to open it in a split, or onto another section to move it there.
-- **Bare / Alle:** hover a section header to show only that section (including Unassigned); Pinned stays visible. **Vis alle** restores every section. The choice is saved in this browser; the section menu also lets you switch individual sections on or off.
 - Drag a section header to reorder sections, or use Move up / Move down in its right-click menu. Lanes (Priority, Active, …) and your own sections share one order.
 - **Section project:** right-click a section → *Project for new threads* to give it a project. *New thread here* (shown as *New thread in &lt;project&gt;*) then opens the composer with that project selected and files the thread in the section.
 - **Tags** allow several per thread. A settings button converts "area" sections (e.g. Commercial) into tags.

@@ -37,8 +37,6 @@
     "server.ts",
     "app.tsx",
     "thread-tree.ui.test.tsx",
-    "section-filter.ui.test.tsx",
-    "section-filter.test.ts",
     "studio.tsx",
     "shell-appearance.tsx",
     "live-activity.tsx",
