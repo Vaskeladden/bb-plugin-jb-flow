@@ -520,7 +520,12 @@ it("requests the actual Status prompt only on click and leaves the composer draf
   // The server writes the request, so it can add the thread's child threads.
   fireEvent.click(slot.getByRole("button", { name: "Status" }));
   await waitFor(() => expect(status).toHaveBeenCalledTimes(1));
-  expect(status.mock.calls[0]).toEqual([{ threadId: "t1" }]);
+  expect(status.mock.calls[0]).toEqual([{ threadId: "t1", kind: "status" }]);
+  // Ultrastatus goes the same way: the server adds the child threads to the thorough prompt.
+  expect(slot.getByRole("button", { name: "Ultrastatus" }).getAttribute("title")).toContain("child threads included");
+  fireEvent.click(slot.getByRole("button", { name: "Ultrastatus" }));
+  await waitFor(() => expect(status).toHaveBeenCalledTimes(2));
+  expect(status.mock.calls[1]).toEqual([{ threadId: "t1", kind: "ultra" }]);
   fireEvent.click(slot.getByRole("button", { name: "Donkey" }));
   await waitFor(() => expect(request).toHaveBeenCalledTimes(1));
   expect(request.mock.calls[0]).toEqual([
@@ -561,7 +566,7 @@ it("answers the Status and Donkey shortcuts for the focused thread, one request 
 
   act(() => requestThreadStatus("t1", "status"));
   await waitFor(() => expect(request).toHaveBeenCalledTimes(1));
-  expect(request.mock.calls[0]).toEqual([{ threadId: "t1" }]);
+  expect(request.mock.calls[0]).toEqual([{ threadId: "t1", kind: "status" }]);
   act(() => requestThreadStatus("t1", "donkey"));
   expect(request).toHaveBeenCalledTimes(1);
 
@@ -594,6 +599,7 @@ it("ignores the shortcuts while the agent is working", async () => {
   );
   await slot.findByRole("region", { name: "Agent activity" });
   expect(slot.queryByRole("button", { name: "Status" })).toBeNull();
+  expect(slot.queryByRole("button", { name: "Ultrastatus" })).toBeNull();
   act(() => requestThreadStatus("t1", "status"));
   act(() => requestThreadStatus("t1", "donkey"));
   await new Promise((resolve) => setTimeout(resolve, 20));

@@ -517,6 +517,7 @@ export function ActivityCard({
   monitorStale = false,
   hasLiveData = true,
   onRequestStatus,
+  onRequestUltrastatus,
   onRequestDonkey,
   onRequestRevise,
   parked,
@@ -541,6 +542,8 @@ export function ActivityCard({
   monitorStale?: boolean;
   hasLiveData?: boolean;
   onRequestStatus?: () => Promise<void>;
+  /** Asks the agent for the thorough, checked report on the whole job, child threads included, shown in pictures. */
+  onRequestUltrastatus?: () => Promise<void>;
   /** Asks the agent to explain the problem in plain words, with decisions as buttons. */
   onRequestDonkey?: () => Promise<void>;
   /** Asks the agent to have Fable 5.2 or Codex review its plan, then continue with the revised plan. */
@@ -617,6 +620,7 @@ export function ActivityCard({
     }
   };
   const requestStatus = () => send(onRequestStatus, "Could not request status. Try again.");
+  const requestUltrastatus = () => send(onRequestUltrastatus, "Could not request the Ultrastatus. Try again.");
   const requestDonkey = () => send(onRequestDonkey, "Could not ask for the explanation. Try again.");
   const requestRevise = () => send(onRequestRevise, "Could not ask for the revision. Try again.");
   const shortcutTargets = useRef({ status: requestStatus, donkey: requestDonkey, canRequest, hasDonkey: !!onRequestDonkey });
@@ -708,6 +712,17 @@ export function ActivityCard({
             title={withShortcut("Ask the agent for a fresh status report", "status")}
           >
             {requesting ? "Requesting…" : "Status"}
+          </button>
+        )}
+        {canRequest && onRequestUltrastatus && (
+          <button
+            type="button"
+            className="jf-monitor-update jf-monitor-update-quiet"
+            disabled={requesting}
+            onClick={requestUltrastatus}
+            title="Ask the agent for a thorough status of the whole job, child threads included: every claim checked, shown as a matrix of what is done and what is left. Takes a while and many tokens"
+          >
+            Ultrastatus
           </button>
         )}
         {canRequest && onRequestDonkey && (
@@ -1210,7 +1225,10 @@ export function LiveActivityBanner({
       watches={wakeups.state?.watches ?? []}
       onCancelWatch={wakeups.cancel}
       onRequestStatus={async () => {
-        await rpc.call("thread_status_request", { threadId });
+        await rpc.call("thread_status_request", { threadId, kind: "status" });
+      }}
+      onRequestUltrastatus={async () => {
+        await rpc.call("thread_status_request", { threadId, kind: "ultra" });
       }}
       onRequestDonkey={async () => {
         await rpc.call("thread_reply", { threadId, text: donkeyPrompt(values?.donkeyPrompt) });

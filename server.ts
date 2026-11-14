@@ -3,7 +3,7 @@ import { lastReply } from "./turn-reply";
 import { workspaceSchema, workspaceStateSchema } from "./workspaces";
 import { createThreadStatus, threadStatusSchema } from "./thread-status";
 import { countSince } from "./catch-up-model";
-import { handBackInstructions, statusRequest, THREAD_REPLY_MAX, type ChildThread } from "./status-prompt";
+import { handBackInstructions, statusRequest, THREAD_REPLY_MAX, ultrastatusRequest, type ChildThread } from "./status-prompt";
 // jb-flow: snooze threads until a date, a daily stale-thread digest, and the
 // state behind the Triage thread list in app.tsx.
 //
@@ -255,8 +255,8 @@ export const rpcContract = defineRpcContract({
     output: z.object({ ok: z.boolean() }),
   },
   thread_status_request: {
-    // The Status button: the report prompt, plus the thread's child threads when it has any.
-    input: z.object({ threadId: z.string() }),
+    // The Status and Ultrastatus buttons: the report prompt, plus the thread's child threads when it has any.
+    input: z.object({ threadId: z.string(), kind: z.enum(["status", "ultra"]) }),
     output: z.object({ ok: z.boolean(), children: z.number() }),
   },
   your_move: {
@@ -380,6 +380,14 @@ export default async function plugin(bb: BbPluginApi) {
       label: "Donkey prompt",
       description:
         "What the Donkey button sends: explain the real problem in plain words with an example, and ask each decision as a **Decision needed:** callout so Your next move offers buttons. Leave empty for the built-in prompt.",
+      experimental_multiline: true,
+      default: "",
+    },
+    ultrastatusPrompt: {
+      type: "string",
+      label: "Ultrastatus prompt",
+      description:
+        "What the Ultrastatus button sends: rebuild the whole job from the thread and its child threads, check every claim against its source, and report mostly in visuals (a matrix of what is done and what is left). Leave empty for the built-in prompt.",
       experimental_multiline: true,
       default: "",
     },
@@ -1102,9 +1110,13 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
       await bb.sdk.threads.send({ threadId, mode: "queue-if-active", input: [{ type: "text", text, mentions: [] }] });
       return { ok: true };
     },
-    thread_status_request: async ({ threadId }) => {
+    thread_status_request: async ({ threadId, kind }) => {
       const children = await childThreads(threadId);
-      const text = statusRequest((await settings.get()).statusPrompt, threadId, children);
+      const values = await settings.get();
+      const text =
+        kind === "ultra"
+          ? ultrastatusRequest(values.ultrastatusPrompt, threadId, children)
+          : statusRequest(values.statusPrompt, threadId, children);
       await bb.sdk.threads.send({ threadId, mode: "queue-if-active", input: [{ type: "text", text, mentions: [] }] });
       return { ok: true, children: children.length };
     },

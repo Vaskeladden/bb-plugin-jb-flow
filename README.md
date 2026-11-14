@@ -232,6 +232,13 @@ built-in prompt in that format), preserving your composer draft. It runs only wh
 In a thread with child threads, the request also lists every child (and their children) with its state and
 last report, and asks for one report on the whole job: progress per child, a **Children** section, and next
 steps that steer them. The agent messages a child only after you reply go.
+**Ultrastatus**, next to it, is the heavy version for a long-running job: it sends the **Ultrastatus prompt**
+setting (empty uses the built-in one). The agent rebuilds the whole job from the thread, reads every child thread
+that is not done, checks each claim against its source (a pull request's state, what is really live, a test run)
+and marks it checked or only claimed. The report is mostly visuals: one bar for the whole job, a matrix of what
+is done and what is left, the remaining work in order, then gaps and surprises, with a few plain sentences each.
+It ends with the same Goal, Done, Next and Progress fields, so the monitor stays current. It takes a while and
+many tokens; it changes nothing and messages no child before you reply go.
 To skip the button, turn on **Status report at hand-back**: agents then end every reply that hands the
 thread back to you (done, blocked, or waiting for your input) with that report, and the monitor keeps itself
 current. Threads pick it up when their session next starts.
@@ -434,6 +441,7 @@ Under **Settings → JB Flow**:
 - **⌘K opens the JB Flow palette**: the palette takes over BB's Search threads key (on by default).
 - **Catch up**: the Catch up page, the ⌥⇧C command, its palette entry and home-page line (on by default).
 - **Status report prompt**: what *Update status* sends; empty uses a short built-in prompt.
+- **Ultrastatus prompt**: what *Ultrastatus* sends; empty uses the built-in thorough, visual report.
 - **Status report at hand-back**: agents end replies that hand the thread back with the status report, so the monitor stays current (off by default).
 - **Stale after (days)**: when an unsectioned thread shows up in the digest (default 7).
 - **Continue after usage-limit resets**: whether threads auto-continue after a Claude Code usage limit unless switched in the monitor (off by default).

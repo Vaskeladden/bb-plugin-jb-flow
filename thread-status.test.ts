@@ -1,6 +1,19 @@
 // @vitest-environment node
 import { expect, it } from "vitest";
-import { CHILD_ROWS_MAX, childrenSection, DEFAULT_DONKEY_PROMPT, DEFAULT_REVISE_PROMPT, DEFAULT_STATUS_PROMPT, handBackInstructions, statusRequest, THREAD_REPLY_MAX, type ChildThread } from "./status-prompt";
+import {
+  CHILD_ROWS_MAX,
+  childrenSection,
+  DEFAULT_DONKEY_PROMPT,
+  DEFAULT_REVISE_PROMPT,
+  DEFAULT_STATUS_PROMPT,
+  DEFAULT_ULTRASTATUS_PROMPT,
+  handBackInstructions,
+  statusRequest,
+  THREAD_REPLY_MAX,
+  ULTRA_CHILD_ROWS_MAX,
+  ultrastatusRequest,
+  type ChildThread,
+} from "./status-prompt";
 import {
   createFakePluginHost,
   makeThreadResponse,
@@ -347,4 +360,78 @@ it("lists the most urgent children and counts the rest", () => {
   expect(rows[0]).toContain("thr_ask");
   expect(text).toContain("- 5 more not listed, the least urgent ones. `bb thread list --parent-thread thr_parent` lists them all.");
   expect(text).toContain(`${CHILD_ROWS_MAX + 5} child threads: 1 Needs me · ${CHILD_ROWS_MAX + 4} Done.`);
+});
+
+it("asks Ultrastatus for a checked, visual report the monitor can still read", () => {
+  expect(ultrastatusRequest("", "thr_parent", [])).toBe(DEFAULT_ULTRASTATUS_PROMPT);
+  // Tools that tell a button's message from the user's own words match on this opening.
+  expect(DEFAULT_ULTRASTATUS_PROMPT.startsWith("Ultrastatus: give me a thorough, checked status report")).toBe(true);
+  for (const part of ["Check each piece against its source", "**Matrix.**", "```ui", "**claimed**", "--include-archived", "### Progress", "**Decision needed:**"]) {
+    expect(DEFAULT_ULTRASTATUS_PROMPT).toContain(part);
+  }
+  // A reply in that shape: pictures first, then the fields the monitor reads.
+  const report = parseStatusReport(
+    [
+      "We are two thirds there. The import is the risk.",
+      "",
+      "```ui",
+      'Card("Matrix", [Acceptance([{name: "Export", cells: {Built: "passed", Live: "claimed"}}], ["Built", "Live"])])',
+      "```",
+      "",
+      "**Goal:** Every invoice reaches the accountant",
+      "",
+      "**Done:** Export is merged and checked",
+      "",
+      "**Next:** Finish the import",
+      "",
+      "### Progress",
+      "```",
+      "[██████████] Export   done",
+      "[███░░░░░░░] Import   30%  ← here",
+      "```",
+      "",
+      "### Next steps",
+      "> [!TIP]",
+      "> **Path forward:** Finish the import",
+      "> 1. Fix the date format · the last failing check",
+    ].join("\n"),
+    1,
+  );
+  expect(report?.goal).toBe("Every invoice reaches the accountant");
+  expect(report?.milestones).toEqual([
+    { label: "Export", percent: 100 },
+    { label: "Import", percent: 30 },
+  ]);
+  expect(report?.stepGroups?.[0]?.items).toHaveLength(1);
+});
+
+it("has Ultrastatus read every child and check the finished ones", () => {
+  const now = 10 * 60 * 60_000;
+  const text = ultrastatusRequest(
+    "",
+    "thr_parent",
+    [
+      child({ id: "thr_done", title: "Old import", state: "done", reason: "nothing pending" }),
+      child({ id: "thr_ask", title: "Billing export", state: "needs", reason: "asked you a question", goal: "Export every invoice", heardAt: now }),
+    ],
+    now,
+  );
+  expect(text.startsWith(`${DEFAULT_ULTRASTATUS_PROMPT}\n\n---`)).toBe(true);
+  expect(text).toContain("2 child threads: 1 Needs me · 1 Done.");
+  expect(text.split("\n").filter((line) => line.startsWith("- thr_"))).toHaveLength(2);
+  expect(text).toContain("Read every child that is not done");
+  expect(text).toContain("A finished child is a claim like any other");
+  expect(text).toContain("Do not message a child to write this report");
+  // The short report's own section is not asked for here: the matrix holds the children.
+  expect(text).not.toContain("### Children");
+  expect(ultrastatusRequest("Tell me everything.", "thr_parent", [child({})]).startsWith("Tell me everything.\n\n---")).toBe(true);
+});
+
+it("lists more children for Ultrastatus than for Status", () => {
+  const many = Array.from({ length: ULTRA_CHILD_ROWS_MAX + 3 }, (_, index) => child({ id: `thr_done${index}`, state: "done" }));
+  const rows = (text: string) => text.split("\n").filter((line) => line.startsWith("- thr_"));
+  expect(rows(statusRequest("", "thr_parent", many))).toHaveLength(CHILD_ROWS_MAX);
+  const ultra = ultrastatusRequest("", "thr_parent", many);
+  expect(rows(ultra)).toHaveLength(ULTRA_CHILD_ROWS_MAX);
+  expect(ultra).toContain("- 3 more not listed");
 });
