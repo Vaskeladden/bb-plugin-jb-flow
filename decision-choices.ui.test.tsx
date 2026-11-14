@@ -188,12 +188,61 @@ it("asks two decisions as two groups and sends each answer tied to its question"
   expect((await slot.findAllByRole("radio")).length).toBe(4);
   expect(slot.getByText("Decision 1: Money page")).toBeTruthy();
   expect(slot.getByText("Decision 2: Test site")).toBeTruthy();
-  fireEvent.click(slot.getByRole("radio", { name: /Money page yes/ }));
   expect(slot.getByRole("button", { name: "Choose an option to send" }).hasAttribute("disabled")).toBe(true);
+  fireEvent.click(slot.getByRole("radio", { name: /Money page yes/ }));
+  expect(slot.getByRole("button", { name: "1 left to answer" }).hasAttribute("disabled")).toBe(true);
   fireEvent.click(slot.getByRole("radio", { name: /Test site no/ }));
   fireEvent.click(slot.getByRole("button", { name: "Send “decision 1: 1; decision 2: 2”" }));
   await slot.findByText("Sent “decision 1: 1; decision 2: 2”");
   expect(reply.mock.calls[0]).toEqual([{ threadId: "t1", text: "decision 1: 1; decision 2: 2" }]);
+  slot.lifecycle.unmount();
+});
+it("keeps many questions in one scroll area, with the heading and the send button outside it", async () => {
+  const ask = (question: string) => ({
+    mode: "choice" as const,
+    question,
+    options: [
+      { n: 1, text: `${question} yes`, recommended: true },
+      { n: 2, text: `${question} no`, recommended: false },
+    ],
+  });
+  const groups = ["A", "B", "C", "D", "E", "F", "G"].map(ask);
+  const slot = renderSlot(
+    { component: DecisionChips },
+    { threadId: "t1", updatedAt: 1, idle: true },
+    { rpc: { decision_options: () => ({ groups }), thread_reply: vi.fn() } },
+  );
+  expect((await slot.findAllByRole("group")).length).toBe(7);
+  const box = slot.container.querySelector(".jf-choices-groups")!;
+  expect(box.getAttribute("data-many")).toBe("true");
+  expect(box.querySelectorAll('[role="group"]').length).toBe(7);
+  const send = slot.getByRole("button", { name: "Choose an option to send" });
+  expect(box.contains(send)).toBe(false);
+  expect(box.contains(slot.getByText("YOUR NEXT MOVE"))).toBe(false);
+  fireEvent.click(slot.getByRole("radio", { name: /A yes/ }));
+  fireEvent.click(slot.getByRole("radio", { name: /B no/ }));
+  expect(slot.getByRole("button", { name: "5 left to answer" }).hasAttribute("disabled")).toBe(true);
+  // The fade that says more is below follows the scroll position.
+  Object.defineProperties(box, {
+    scrollHeight: { configurable: true, value: 900 },
+    clientHeight: { configurable: true, value: 360 },
+    scrollTop: { configurable: true, writable: true, value: 0 },
+  });
+  fireEvent.scroll(box);
+  expect(box.getAttribute("data-more")).toBe("true");
+  (box as HTMLElement).scrollTop = 540;
+  fireEvent.scroll(box);
+  expect(box.getAttribute("data-more")).toBe("false");
+  slot.lifecycle.unmount();
+});
+it("leaves a lone group's own list as the scroll area", async () => {
+  const slot = renderSlot(
+    { component: DecisionChips },
+    { threadId: "t1", updatedAt: 1, idle: true },
+    { rpc: { decision_options: () => ({ groups: [{ mode: "go" as const, question: "", options }] }), thread_reply: vi.fn() } },
+  );
+  await slot.findByRole("button", { name: "Go" });
+  expect(slot.container.querySelector(".jf-choices-groups")!.getAttribute("data-many")).toBe("false");
   slot.lifecycle.unmount();
 });
 it("shows a lone decision's question, and says what it shows for the message to hide", async () => {

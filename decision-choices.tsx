@@ -31,6 +31,11 @@ export function answerFor(option: { n: number; text: string }): string {
   return trigger === "polish" ? "polish pr" : "shipit";
 }
 
+/** Whether a scroll area has content below what it shows. */
+export function hasMoreBelow(box: { scrollHeight: number; scrollTop: number; clientHeight: number }): boolean {
+  return box.scrollHeight - box.scrollTop - box.clientHeight > 4;
+}
+
 /** "go" for all steps, or "go 1,3" for the ticked ones. */
 function goText(picked: readonly number[]): string {
   const steps = [...picked].sort((a, b) => a - b);
@@ -48,6 +53,21 @@ function Choices({ threadId, updatedAt }: { threadId: string; updatedAt: number 
   const locked = useRef(false);
   const mounted = useRef(false);
   const shown = useRef("");
+  // Several groups share one scroll area, so the box never grows past the view; this says whether more is below.
+  const scroller = useRef<HTMLDivElement>(null);
+  const [moreBelow, setMoreBelow] = useState(false);
+  const measure = () => {
+    const box = scroller.current;
+    if (box) setMoreBelow(hasMoreBelow(box));
+  };
+  useEffect(() => {
+    measure();
+    const box = scroller.current;
+    if (!box || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(box);
+    return () => observer.disconnect();
+  }, [groups]);
   useEffect(() => {
     mounted.current = true;
     let live = true;
@@ -86,7 +106,8 @@ function Choices({ threadId, updatedAt }: { threadId: string; updatedAt: number 
       return next;
     });
   // The reply for several groups names each answer; a lone group keeps its usual "go …" or number.
-  const missing = groups.some((group, index) => group.mode === "choice" && pickedIn(index).length === 0);
+  const unanswered = groups.filter((group, index) => group.mode === "choice" && pickedIn(index).length === 0).length;
+  const missing = unanswered > 0;
   // Several decisions name theirs by position ("decision 2: 1"), so each answer stays tied to its question.
   const decisions = groups.filter((group) => group.mode === "choice").length;
   let decisionNumber = 0;
@@ -135,7 +156,9 @@ function Choices({ threadId, updatedAt }: { threadId: string; updatedAt: number 
           ? `Go with ${[...pickedIn(0)].sort((a, b) => a - b).join(", ")}`
           : "Go"
         : missing
-          ? "Choose an option to send"
+          ? unanswered === decisions
+            ? "Choose an option to send"
+            : `${unanswered} left to answer`
           : `Send “${composed}”`;
   return (
     <section
@@ -150,55 +173,57 @@ function Choices({ threadId, updatedAt }: { threadId: string; updatedAt: number 
         <span>YOUR NEXT MOVE</span>
         <span className="jf-choices-hint">{instant ? "Choose a reply" : onlyGo ? "Pick steps, or Go for all" : groups.some((group) => group.mode === "go") ? "Pick steps and an answer, then send" : "Answer each, then send"}</span>
       </div>
-      {groups.map((group, index) => {
-        const go = group.mode === "go";
-        const decisionLabel = decisions > 1 ? `Decision ${groups.slice(0, index + 1).filter((g) => g.mode === "choice").length}` : "Decision";
-        const heading = groups.length === 1 ? group.question : `${go ? "Steps" : decisionLabel}${group.question ? `: ${group.question}` : ""}`;
-        return (
-          <div key={index} className="jf-choices-group" role="group" aria-label={go ? "Steps" : group.question || "Decision"}>
-            {heading && <p className="jf-choices-question">{heading}</p>}
-            <div className="jf-choices-list">
-              {group.options.map((option) => {
-                const text = answerFor(option);
-                const selected = instant ? pending === text || sent === text : pickedIn(index).includes(option.n);
-                const label = `${go ? "Step" : instant ? "Reply" : "Option"} ${option.n}: ${option.text}${option.recommended ? " (recommended)" : ""}`;
-                return (
-                  <button
-                    key={option.n}
-                    type="button"
-                    role={go ? "checkbox" : instant ? undefined : "radio"}
-                    className="jf-choice"
-                    data-recommended={option.recommended}
-                    data-selected={selected}
-                    aria-checked={go || !instant ? selected : undefined}
-                    disabled={busy}
-                    aria-label={label}
-                    aria-busy={instant && pending === text}
-                    title={option.text}
-                    onClick={() => (instant ? void reply(text) : toggle(index, option.n, !go))}
-                  >
-                    <span className="jf-choice-number" aria-hidden="true">
-                      {instant && pending === text ? (
-                        <Icon name="Loader" className="jf-choice-spinner size-3" />
-                      ) : selected ? (
-                        <Icon name="Check" className="size-3" />
-                      ) : (
-                        option.n
-                      )}
-                    </span>
-                    <span className="jf-choice-text">{option.text}</span>
-                    {(option.recommended || (instant && (pending === text || sent === text))) && (
-                      <span className="jf-choice-meta">
-                        {instant && pending === text ? "Sending…" : instant && sent === text ? "Reply sent" : "Recommended"}
+      <div ref={scroller} className="jf-choices-groups" data-many={groups.length > 1} data-more={moreBelow} onScroll={measure}>
+        {groups.map((group, index) => {
+          const go = group.mode === "go";
+          const decisionLabel = decisions > 1 ? `Decision ${groups.slice(0, index + 1).filter((g) => g.mode === "choice").length}` : "Decision";
+          const heading = groups.length === 1 ? group.question : `${go ? "Steps" : decisionLabel}${group.question ? `: ${group.question}` : ""}`;
+          return (
+            <div key={index} className="jf-choices-group" role="group" aria-label={go ? "Steps" : group.question || "Decision"}>
+              {heading && <p className="jf-choices-question">{heading}</p>}
+              <div className="jf-choices-list">
+                {group.options.map((option) => {
+                  const text = answerFor(option);
+                  const selected = instant ? pending === text || sent === text : pickedIn(index).includes(option.n);
+                  const label = `${go ? "Step" : instant ? "Reply" : "Option"} ${option.n}: ${option.text}${option.recommended ? " (recommended)" : ""}`;
+                  return (
+                    <button
+                      key={option.n}
+                      type="button"
+                      role={go ? "checkbox" : instant ? undefined : "radio"}
+                      className="jf-choice"
+                      data-recommended={option.recommended}
+                      data-selected={selected}
+                      aria-checked={go || !instant ? selected : undefined}
+                      disabled={busy}
+                      aria-label={label}
+                      aria-busy={instant && pending === text}
+                      title={option.text}
+                      onClick={() => (instant ? void reply(text) : toggle(index, option.n, !go))}
+                    >
+                      <span className="jf-choice-number" aria-hidden="true">
+                        {instant && pending === text ? (
+                          <Icon name="Loader" className="jf-choice-spinner size-3" />
+                        ) : selected ? (
+                          <Icon name="Check" className="size-3" />
+                        ) : (
+                          option.n
+                        )}
                       </span>
-                    )}
-                  </button>
-                );
-              })}
+                      <span className="jf-choice-text">{option.text}</span>
+                      {(option.recommended || (instant && (pending === text || sent === text))) && (
+                        <span className="jf-choice-meta">
+                          {instant && pending === text ? "Sending…" : instant && sent === text ? "Reply sent" : "Recommended"}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
-          </div>
-        );
-      })}
+          );
+        })}
+      </div>
       {!instant && (
         <div className="jf-choices-actions">
           {sent === null ? (
