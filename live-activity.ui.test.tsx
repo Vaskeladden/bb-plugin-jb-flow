@@ -663,6 +663,57 @@ it("keeps the saved report and reports a failed status request inline", async ()
   slot.lifecycle.unmount();
 });
 
+it("says so in the heading when Archive or Park fails, also with the monitor collapsed", async () => {
+  localStorage.setItem(MONITOR_COLLAPSE_KEY, "true");
+  const idle = {
+    data: { ...data, activeBackgroundCommands: [], pendingTodos: null },
+    running: false,
+    startedAt: null,
+    now: 61000,
+    updatedAt: 61000,
+    connected: true,
+    monitor: savedMonitor,
+  };
+  const failing = renderSlot(
+    { component: ActivityCard },
+    {
+      ...idle,
+      archiveTone: "ready" as const,
+      onArchive: async () => {
+        throw new Error("the thread still has a running command");
+      },
+      parked: false,
+      onTogglePark: async () => {
+        throw new Error("offline");
+      },
+    },
+  );
+  expect(failing.getByRole("region", { name: "Agent activity" }).getAttribute("data-collapsed")).toBe("true");
+  expect(failing.queryByRole("alert")).toBeNull();
+  fireEvent.click(failing.getByRole("button", { name: "Archive" }));
+  expect((await failing.findByRole("alert")).textContent).toBe("Could not archive the thread: the thread still has a running command");
+  fireEvent.click(failing.getByRole("button", { name: "Park" }));
+  await failing.findByText("Could not park the thread: offline");
+  expect(failing.getAllByRole("alert")).toHaveLength(1);
+  failing.lifecycle.unmount();
+
+  let parkedTo: boolean | null = null;
+  const working = renderSlot(
+    { component: ActivityCard },
+    {
+      ...idle,
+      parked: false,
+      onTogglePark: async (next: boolean) => {
+        parkedTo = next;
+      },
+    },
+  );
+  fireEvent.click(working.getByRole("button", { name: "Park" }));
+  await waitFor(() => expect(parkedTo).toBe(true));
+  expect(working.queryByRole("alert")).toBeNull();
+  working.lifecycle.unmount();
+});
+
 it("starts mobile monitors as a compact row and expands the entire body on demand", () => {
   vi.stubGlobal(
     "matchMedia",

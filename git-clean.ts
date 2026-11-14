@@ -2,6 +2,7 @@
 // worktree, so a finished thread can show as Done (purple) instead of Ready.
 // bb's environment status answers both questions, and it knows squash merges
 // ("committed unmerged" is false once the work landed on the default branch).
+import { everyThread } from "./all-threads.ts";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
@@ -98,7 +99,7 @@ export function createGitClean(bb: BbPluginApi, changed: () => void) {
   bb.background.service("git-clean-sweep", {
     async start(signal) {
       while (!signal.aborted) {
-        const threads = await bb.sdk.threads.list({ limit: 500 }).catch(() => []);
+        const threads = await everyThread((page) => bb.sdk.threads.list(page)).catch(() => []);
         for (const thread of threads) {
           if (signal.aborted) return;
           await check(thread as never, signal).catch(() => {});

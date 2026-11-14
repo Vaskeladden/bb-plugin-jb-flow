@@ -3,6 +3,7 @@
 // or is the work wrapped up? Any open decision counts, menus too ("pick one",
 // "Reply go for all"): a thread with a question pending is not done (2026-11-09,
 // replacing the 2026-11-05 rule that only "?" questions count).
+import { everyThread } from "./all-threads.ts";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { lastReply, turnReply } from "./turn-reply.ts";
 import { laneSections } from "./lanes.ts";
@@ -286,7 +287,7 @@ export function createAwaiting(bb: BbPluginApi, changed: () => void) {
     async start(signal) {
       // Bump when the rules change, so open threads are re-classified once.
       if ((await kv.get<number>("awaitingVersion")) !== AWAITING_VERSION) {
-        const threads = await bb.sdk.threads.list({ limit: 500 });
+        const threads = await everyThread((page) => bb.sdk.threads.list(page));
         for (const thread of threads) {
           if (signal.aborted) return;
           if (thread.archivedAt !== null || thread.status !== "idle") continue;

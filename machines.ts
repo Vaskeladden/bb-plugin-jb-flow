@@ -1,5 +1,6 @@
 // Which machine each thread runs on (its environment's host), for the sidebar's
 // machine filter. Cached briefly: state_get runs on every change.
+import { everyThread } from "./all-threads";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
@@ -38,7 +39,7 @@ export function createMachines(bb: BbPluginApi) {
   }
   async function load(): Promise<Machines> {
     const [threads, environments, hosts] = await Promise.all([
-      bb.sdk.threads.list({ limit: 500 }),
+      everyThread((page) => bb.sdk.threads.list(page)),
       bb.sdk.environments.list(),
       bb.sdk.hosts.list(),
     ]);

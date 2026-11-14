@@ -3,6 +3,7 @@
 // instead of synthesizing keystrokes. Every BB window reports its focused pane
 // over RPC. The window you last physically used (click, key, pointer) wins: with
 // BB open on two Macs, both windows can have OS focus on their own machine.
+import { everyThread } from "./all-threads";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 
@@ -89,12 +90,7 @@ export function createFocus(
 
   /** Threads that need the user, oldest attention first (inbox order). */
   async function needsMe() {
-    const threads: Thread[] = [];
-    for (let offset = 0; ; offset += 500) {
-      const page = await bb.sdk.threads.list({ limit: 500, offset });
-      threads.push(...page);
-      if (page.length < 500) break;
-    }
+    const threads: Thread[] = await everyThread((page) => bb.sdk.threads.list(page));
     const awaiting = await getAwaiting();
     // Snoozed threads stay hidden until they wake, as in the sidebar.
     const snoozedSectionId = await getSnoozedSectionId();

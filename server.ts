@@ -1,3 +1,5 @@
+import { everyThread } from "./all-threads";
+import { sectionOnWake, sectionSnoozedFrom } from "./snooze-section";
 import { createWorkspaceStorage } from "./workspace-storage";
 import { lastReply } from "./turn-reply";
 import { workspaceSchema, workspaceStateSchema } from "./workspaces";
@@ -550,17 +552,8 @@ export default async function plugin(bb: BbPluginApi) {
   }
 
   async function listAllActiveThreads(): Promise<Thread[]> {
-    const threads: Thread[] = [];
-    for (let offset = 0; ; offset += 500) {
-      const page = await bb.sdk.threads.list({ limit: 500, offset });
-      // Filter as well: archived/hidden rows must never reach the digest.
-      threads.push(
-        ...page.filter(
-          (thread) => thread.archivedAt === null && thread.deletedAt === null && thread.visibility === "visible",
-        ),
-      );
-      if (page.length < 500) return threads;
-    }
+    // Filter as well: archived/hidden rows must never reach the digest.
+    return (await everyThread((page) => bb.sdk.threads.list(page))).filter((thread) => thread.archivedAt === null && thread.deletedAt === null && thread.visibility === "visible");
   }
 
   // --- snooze ---------------------------------------------------------------
@@ -597,8 +590,7 @@ export default async function plugin(bb: BbPluginApi) {
       until,
       note: note?.trim() || null,
       // Re-snoozing keeps the section the thread originally came from.
-      fromSectionId:
-        previous?.fromSectionId ?? (thread.sectionId === sectionId ? null : thread.sectionId),
+      fromSectionId: sectionSnoozedFrom(previous?.fromSectionId, thread.sectionId, sectionId),
       snoozedAt: Date.now(),
     };
     await bb.sdk.threads.update({ threadId, sectionId });
@@ -611,11 +603,7 @@ export default async function plugin(bb: BbPluginApi) {
 
   async function wake(threadId: string, record: Snooze, reason: "due" | "manual"): Promise<void> {
     const sections = await bb.sdk.threadSections.list();
-    let restoreTo =
-      record.fromSectionId !== null &&
-      sections.some((section) => section.id === record.fromSectionId)
-        ? record.fromSectionId
-        : null;
+    let restoreTo = sectionOnWake(record.fromSectionId, sections.map((section) => section.id));
     // Snoozed while waiting on someone ("when it wakes, I'll check for Sam's
     // reply"): wake into Waiting for others instead of the old section.
     // Only for a snooze that ran out; cancelling one puts the thread back where it was.
@@ -1158,7 +1146,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
         const section = sections.find((candidate) => candidate.id === sectionId);
         if (section === undefined) continue;
         const tag = section.name.replace(/^[^\p{L}\p{N}]+/u, "").trim();
-        const inSection = await bb.sdk.threads.list({ sectionId, limit: 500 });
+        const inSection = await everyThread((page) => bb.sdk.threads.list({ sectionId, ...page }));
         for (const thread of inSection.filter((candidate) => candidate.archivedAt === null)) {
           tags[thread.id] = [...new Set([...(tags[thread.id] ?? []), tag])];
           await bb.sdk.threads.update({ threadId: thread.id, sectionId: moveToSectionId });
@@ -1393,7 +1381,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
   let threadListCache: { at: number; threads: Promise<ListedThread[]> } | null = null;
   function listThreadsCached(): Promise<ListedThread[]> {
     if (threadListCache === null || Date.now() - threadListCache.at > 10_000) {
-      const threads = bb.sdk.threads.list({ limit: 500 });
+      const threads = everyThread((page) => bb.sdk.threads.list(page));
       threadListCache = { at: Date.now(), threads };
       threads.catch(() => {
         threadListCache = null;
@@ -1617,7 +1605,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
           case "states": {
             // Every live, non-snoozed thread with its one state and why, as the sidebar sees it.
             const snoozedSection = await findSnoozedSection();
-            const [threads, facts] = await Promise.all([bb.sdk.threads.list({ limit: 500 }), stateFacts()]);
+            const [threads, facts] = await Promise.all([everyThread((page) => bb.sdk.threads.list(page)), stateFacts()]);
             const now = Date.now();
             const rows = threads
               .filter((thread) => thread.archivedAt === null && thread.visibility === "visible")
@@ -1648,7 +1636,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
             // Debug view: where each open thread lands in the triage sidebar, with
             // the tail of its last agent message to check the call against.
             const [threads, awaitingAll, byThread, watching, sections, promised, waitingOthers] = await Promise.all([
-              bb.sdk.threads.list({ limit: 500 }),
+              everyThread((page) => bb.sdk.threads.list(page)),
               awaiting.all(),
               prTracker.byThread(),
               watchingByThread(),

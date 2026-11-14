@@ -5,6 +5,7 @@
 // (incrementally, from a per-thread cursor), plus manual links. Status: one
 // batched GraphQL query every few minutes for all linked PRs, with stack order
 // derived from base/head branches within a repo.
+import { everyThread } from "./all-threads.ts";
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
@@ -294,12 +295,8 @@ export function createPrTracker(bb: BbPluginApi, changed: () => void) {
 
   /** Ids of threads that are neither archived nor deleted. */
   async function liveThreadIds(): Promise<Set<string>> {
-    const ids = new Set<string>();
-    for (let offset = 0; ; offset += 500) {
-      const page = await bb.sdk.threads.list({ limit: 500, offset });
-      for (const thread of page) if (thread.archivedAt === null && thread.deletedAt === null) ids.add(thread.id);
-      if (page.length < 500) return ids;
-    }
+    const live = (await everyThread((page) => bb.sdk.threads.list(page))).filter((thread) => thread.archivedAt === null && thread.deletedAt === null);
+    return new Set(live.map((thread) => thread.id));
   }
 
   /**
@@ -448,7 +445,7 @@ export function createPrTracker(bb: BbPluginApi, changed: () => void) {
         await exclusive(() => setThreads({}));
         await kv.set("threadPrsVersion", 2);
       }
-      const threads = await bb.sdk.threads.list({ limit: 500 });
+      const threads = await everyThread((page) => bb.sdk.threads.list(page));
       for (const thread of threads) {
         if (signal.aborted) return;
         if (thread.archivedAt !== null || thread.parentThreadId !== null) continue;
