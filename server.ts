@@ -1,9 +1,11 @@
+import { everyThread } from "./all-threads";
+import { sectionOnWake, sectionSnoozedFrom } from "./snooze-section";
 import { createWorkspaceStorage } from "./workspace-storage";
 import { lastReply } from "./turn-reply";
 import { workspaceSchema, workspaceStateSchema } from "./workspaces";
 import { createThreadStatus, threadStatusSchema } from "./thread-status";
 import { countSince } from "./catch-up-model";
-import { handBackInstructions, THREAD_REPLY_MAX } from "./status-prompt";
+import { handBackInstructions, statusRequest, THREAD_REPLY_MAX, ultrastatusRequest, type ChildThread } from "./status-prompt";
 // jb-flow: snooze threads until a date, a daily stale-thread digest, and the
 // state behind the Triage thread list in app.tsx.
 //
@@ -14,7 +16,7 @@ import { fileURLToPath } from "node:url";
 import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { createActivity } from "./activity";
-import { THREAD_STATE_LABEL, THREAD_STATES, threadState, type ThreadStateId } from "./thread-states";
+import { THREAD_STATE_LABEL, THREAD_STATES, threadState, type ThreadStateFacts, type ThreadStateId } from "./thread-states";
 import { createGitClean } from "./git-clean";
 import { createAwaiting, DECLARED_STATES, declaredState, waitsOnOthers } from "./awaiting";
 import { nextMove, parseDecisionOptions } from "./decisions";
@@ -256,6 +258,11 @@ export const rpcContract = defineRpcContract({
     input: z.object({ threadId: z.string(), text: z.string().min(1).max(THREAD_REPLY_MAX) }),
     output: z.object({ ok: z.boolean() }),
   },
+  thread_status_request: {
+    // The Status and Ultrastatus buttons: the report prompt, plus the thread's child threads when it has any.
+    input: z.object({ threadId: z.string(), kind: z.enum(["status", "ultra"]) }),
+    output: z.object({ ok: z.boolean(), children: z.number() }),
+  },
   your_move: {
     input: z.null(),
     output: z.object({
@@ -377,6 +384,14 @@ export default async function plugin(bb: BbPluginApi) {
       label: "Donkey prompt",
       description:
         "What the Donkey button sends: explain the real problem in plain words with an example, and ask each decision as a **Decision needed:** callout so Your next move offers buttons. Leave empty for the built-in prompt.",
+      experimental_multiline: true,
+      default: "",
+    },
+    ultrastatusPrompt: {
+      type: "string",
+      label: "Ultrastatus prompt",
+      description:
+        "What the Ultrastatus button sends: rebuild the whole job from the thread and its child threads, check every claim against its source, and report mostly in visuals (a matrix of what is done and what is left). Leave empty for the built-in prompt.",
       experimental_multiline: true,
       default: "",
     },
@@ -539,17 +554,8 @@ export default async function plugin(bb: BbPluginApi) {
   }
 
   async function listAllActiveThreads(): Promise<Thread[]> {
-    const threads: Thread[] = [];
-    for (let offset = 0; ; offset += 500) {
-      const page = await bb.sdk.threads.list({ limit: 500, offset });
-      // Filter as well: archived/hidden rows must never reach the digest.
-      threads.push(
-        ...page.filter(
-          (thread) => thread.archivedAt === null && thread.deletedAt === null && thread.visibility === "visible",
-        ),
-      );
-      if (page.length < 500) return threads;
-    }
+    // Filter as well: archived/hidden rows must never reach the digest.
+    return (await everyThread((page) => bb.sdk.threads.list(page))).filter((thread) => thread.archivedAt === null && thread.deletedAt === null && thread.visibility === "visible");
   }
 
   // --- snooze ---------------------------------------------------------------
@@ -586,8 +592,7 @@ export default async function plugin(bb: BbPluginApi) {
       until,
       note: note?.trim() || null,
       // Re-snoozing keeps the section the thread originally came from.
-      fromSectionId:
-        previous?.fromSectionId ?? (thread.sectionId === sectionId ? null : thread.sectionId),
+      fromSectionId: sectionSnoozedFrom(previous?.fromSectionId, thread.sectionId, sectionId),
       snoozedAt: Date.now(),
     };
     await bb.sdk.threads.update({ threadId, sectionId });
@@ -600,11 +605,7 @@ export default async function plugin(bb: BbPluginApi) {
 
   async function wake(threadId: string, record: Snooze, reason: "due" | "manual"): Promise<void> {
     const sections = await bb.sdk.threadSections.list();
-    let restoreTo =
-      record.fromSectionId !== null &&
-      sections.some((section) => section.id === record.fromSectionId)
-        ? record.fromSectionId
-        : null;
+    let restoreTo = sectionOnWake(record.fromSectionId, sections.map((section) => section.id));
     // Snoozed while waiting on someone ("when it wakes, I'll check for Sam's
     // reply"): wake into Waiting for others instead of the old section.
     // Only for a snooze that ran out; cancelling one puts the thread back where it was.
@@ -897,10 +898,8 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
     bb.log.info(`moved ${threadId} from ${from ?? "none"} to ${sectionId ?? "none"} via ${via}`);
   }
 
-  /** One thread's state with the same facts the sidebar uses. */
-  async function stateOfThread(threadId: string): Promise<string | null> {
-    const thread = await bb.sdk.threads.get({ threadId }).catch(() => null);
-    if (!thread) return null;
+  /** The facts the sidebar reads a thread's state from. */
+  async function stateFacts(): Promise<ThreadStateFacts> {
     const [awaitingAll, watching, promised, waitingOthers, parked, clean, threadPrs] = await Promise.all([
       awaiting.all(),
       watchingByThread(),
@@ -910,7 +909,52 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
       gitClean.all(),
       prTracker.byThread(),
     ]);
-    return threadState(thread, { awaiting: awaitingAll, watching, promised, waitingOthers, parked, clean, threadPrs }).state;
+    return { awaiting: awaitingAll, watching, promised, waitingOthers, parked, clean, threadPrs };
+  }
+
+  /** One thread's state with the same facts the sidebar uses. */
+  async function stateOfThread(threadId: string): Promise<string | null> {
+    const thread = await bb.sdk.threads.get({ threadId }).catch(() => null);
+    if (!thread) return null;
+    return threadState(thread, await stateFacts()).state;
+  }
+
+  /** Every live thread started from this one, at any depth, with its state and last report. */
+  async function childThreads(parentId: string): Promise<ChildThread[]> {
+    const byParent = new Map<string, Thread[]>();
+    for (const thread of await listAllActiveThreads()) {
+      if (thread.parentThreadId === null) continue;
+      byParent.set(thread.parentThreadId, [...(byParent.get(thread.parentThreadId) ?? []), thread]);
+    }
+    const found: Thread[] = [];
+    const seen = new Set([parentId]);
+    for (const queue = [parentId]; queue.length > 0; ) {
+      for (const child of byParent.get(queue.shift()!) ?? []) {
+        if (seen.has(child.id)) continue;
+        seen.add(child.id);
+        found.push(child);
+        queue.push(child.id);
+      }
+    }
+    if (found.length === 0) return [];
+    const facts = await stateFacts();
+    const now = Date.now();
+    return Promise.all(
+      found.map(async (thread) => {
+        const saved = await threadStatus.get(thread.id, false).catch(() => null);
+        return {
+          id: thread.id,
+          title: thread.title ?? "",
+          under: thread.parentThreadId === parentId ? null : thread.parentThreadId,
+          ...threadState(thread, facts, now),
+          goal: saved?.report?.goal ?? "",
+          next: saved?.report?.next ?? "",
+          blocked: saved?.report?.blocked ?? "",
+          latest: saved?.latest ?? "",
+          heardAt: saved ? saved.latestAt : null,
+        };
+      }),
+    );
   }
 
   let stateBuild: Promise<FlowState> | null = null;
@@ -1073,6 +1117,16 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
       await bb.sdk.threads.send({ threadId, mode: "queue-if-active", input: [{ type: "text", text, mentions: [] }] });
       return { ok: true };
     },
+    thread_status_request: async ({ threadId, kind }) => {
+      const children = await childThreads(threadId);
+      const values = await settings.get();
+      const text =
+        kind === "ultra"
+          ? ultrastatusRequest(values.ultrastatusPrompt, threadId, children)
+          : statusRequest(values.statusPrompt, threadId, children);
+      await bb.sdk.threads.send({ threadId, mode: "queue-if-active", input: [{ type: "text", text, mentions: [] }] });
+      return { ok: true, children: children.length };
+    },
     your_move: () => yourMove(),
     unreleased: ({ projectId, refresh }) => unreleased(projectId, refresh),
     leftovers_get: ({ refresh }) => leftovers.read(refresh),
@@ -1111,7 +1165,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
         const section = sections.find((candidate) => candidate.id === sectionId);
         if (section === undefined) continue;
         const tag = section.name.replace(/^[^\p{L}\p{N}]+/u, "").trim();
-        const inSection = await bb.sdk.threads.list({ sectionId, limit: 500 });
+        const inSection = await everyThread((page) => bb.sdk.threads.list({ sectionId, ...page }));
         for (const thread of inSection.filter((candidate) => candidate.archivedAt === null)) {
           tags[thread.id] = [...new Set([...(tags[thread.id] ?? []), tag])];
           await bb.sdk.threads.update({ threadId: thread.id, sectionId: moveToSectionId });
@@ -1357,7 +1411,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
   let threadListCache: { at: number; threads: Promise<ListedThread[]> } | null = null;
   function listThreadsCached(): Promise<ListedThread[]> {
     if (threadListCache === null || Date.now() - threadListCache.at > 10_000) {
-      const threads = bb.sdk.threads.list({ limit: 500 });
+      const threads = everyThread((page) => bb.sdk.threads.list(page));
       threadListCache = { at: Date.now(), threads };
       threads.catch(() => {
         threadListCache = null;
@@ -1581,15 +1635,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
           case "states": {
             // Every live, non-snoozed thread with its one state and why, as the sidebar sees it.
             const snoozedSection = await findSnoozedSection();
-            const [threads, awaitingAll, threadPrsAll, watching, promised, waitingOthers] = await Promise.all([
-              bb.sdk.threads.list({ limit: 500 }),
-              awaiting.all(),
-              prTracker.byThread(),
-              watchingByThread(),
-              awaiting.promised(),
-              awaiting.waitingOthers(),
-            ]);
-            const facts = { awaiting: awaitingAll, watching, promised, waitingOthers, parked: await awaiting.parked(), clean: await gitClean.all(), threadPrs: threadPrsAll };
+            const [threads, facts] = await Promise.all([everyThread((page) => bb.sdk.threads.list(page)), stateFacts()]);
             const now = Date.now();
             const rows = threads
               .filter((thread) => thread.archivedAt === null && thread.visibility === "visible")
@@ -1620,7 +1666,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
             // Debug view: where each open thread lands in the triage sidebar, with
             // the tail of its last agent message to check the call against.
             const [threads, awaitingAll, byThread, watching, sections, promised, waitingOthers] = await Promise.all([
-              bb.sdk.threads.list({ limit: 500 }),
+              everyThread((page) => bb.sdk.threads.list(page)),
               awaiting.all(),
               prTracker.byThread(),
               watchingByThread(),

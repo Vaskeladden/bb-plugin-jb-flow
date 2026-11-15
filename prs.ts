@@ -6,6 +6,7 @@
 // GitHub hub (pr-hub.ts) reads every linked PR in its shared query; this file
 // keeps the result per thread, with stack order derived from base/head
 // branches within a repo.
+import { everyThread } from "./all-threads.ts";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import type { LightItem } from "./hub-model.ts";
@@ -207,12 +208,8 @@ export function createPrTracker(bb: BbPluginApi, changed: () => void, hub: Hub) 
 
   /** Ids of threads that are neither archived nor deleted. */
   async function liveThreadIds(): Promise<Set<string>> {
-    const ids = new Set<string>();
-    for (let offset = 0; ; offset += 500) {
-      const page = await bb.sdk.threads.list({ limit: 500, offset });
-      for (const thread of page) if (thread.archivedAt === null && thread.deletedAt === null) ids.add(thread.id);
-      if (page.length < 500) return ids;
-    }
+    const live = (await everyThread((page) => bb.sdk.threads.list(page))).filter((thread) => thread.archivedAt === null && thread.deletedAt === null);
+    return new Set(live.map((thread) => thread.id));
   }
 
   /**
@@ -329,7 +326,7 @@ export function createPrTracker(bb: BbPluginApi, changed: () => void, hub: Hub) 
         await exclusive(() => setThreads({}));
         await kv.set("threadPrsVersion", 2);
       }
-      const threads = await bb.sdk.threads.list({ limit: 500 });
+      const threads = await everyThread((page) => bb.sdk.threads.list(page));
       for (const thread of threads) {
         if (signal.aborted) return;
         if (thread.archivedAt !== null || thread.parentThreadId !== null) continue;

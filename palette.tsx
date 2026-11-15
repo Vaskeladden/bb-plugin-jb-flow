@@ -27,6 +27,7 @@ import {
   SCOPE_LABEL,
   SCOPE_PREFIX,
   ago,
+  currentPlatform,
   home,
   matchesShortcut,
   parseQuery,
@@ -82,13 +83,6 @@ function writeJson(key: string, value: unknown) {
   } catch {
     /* The palette works without persistence. */
   }
-}
-
-export function currentPlatform(): Platform {
-  const nav = navigator as Navigator & { userAgentData?: { platform?: string } };
-  const name = (nav.userAgentData?.platform || nav.platform || nav.userAgent || "").toLowerCase();
-  if (name.includes("mac") || name.includes("iphone") || name.includes("ipad")) return "mac";
-  return name.includes("win") ? "windows" : "linux";
 }
 
 const errorText = (cause: unknown) => (cause instanceof Error ? cause.message : String(cause));
@@ -183,7 +177,8 @@ type Entry = {
   thread?: boolean;
   /** Always first, unfiltered: built from what you typed. */
   pinned?: boolean;
-  run?: () => unknown;
+  /** secondary: ⌘↵ / ⌘-click, which opens in a split where that means something. */
+  run?: (secondary: boolean) => unknown;
   /** Opens a sub-list instead of running. */
   open?: () => Mode;
   /** The query a sub-list starts with. */
@@ -708,7 +703,7 @@ export function Palette({
         title: page.label,
         keywords: "dashboard page panel open",
         icon: <Icon name="LayoutDashboard" />,
-        run: () => openNavPage(page.id),
+        run: (secondary) => openNavPage(page.id, secondary),
       });
     }
     return entries;
@@ -879,7 +874,7 @@ export function Palette({
           enter(entry.open(), entry.query);
           return;
         }
-        if (entry.run) done(entry.run);
+        if (entry.run) done(() => entry.run!(secondary));
       }
     }
   };

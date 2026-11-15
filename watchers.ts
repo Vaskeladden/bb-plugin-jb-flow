@@ -14,6 +14,7 @@
 //   is messaged when its required checks pass, a required check
 //   fails, reviews/comments arrive, or the PR merges. A thread that is still
 //   working is left alone; its news arrives as one message once it goes idle.
+import { everyThread } from "./all-threads.ts";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { CI_TIMEOUT_MS, logTargetOf, stepCiWatch, type CiWatch } from "./ci-watch.ts";
@@ -572,7 +573,7 @@ export function createWatchers(
         await kv.set("releaseWaiters", stored);
       }
       if ((await get<number>("releaseBackfill", 0)) !== RELEASE_BACKFILL_VERSION) {
-        const threads = await bb.sdk.threads.list({ limit: 500 });
+        const threads = await everyThread((page) => bb.sdk.threads.list(page));
         for (const thread of threads) {
           if (signal.aborted) return;
           if (thread.archivedAt !== null || thread.status !== "idle" || thread.parentThreadId !== null) continue;

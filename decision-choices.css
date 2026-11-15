@@ -179,7 +179,22 @@
   }
 }
 
-/* Several groups (steps plus a decision): each gets its own heading. */
+/* Several groups (steps plus a decision): each gets its own heading, and they
+   share one scroll area. The heading and the send button stay in view, and the
+   box never grows past the view however many questions a report asks. */
+.jf-choices-groups[data-many="true"] {
+  max-height: min(360px, 40dvh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.jf-choices-groups[data-many="true"] .jf-choices-list {
+  max-height: none;
+  overflow: visible;
+}
+/* More below: the last lines fade out. */
+.jf-choices-groups[data-more="true"] {
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent);
+}
 .jf-choices-group + .jf-choices-group {
   margin-top: 8px;
 }

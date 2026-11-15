@@ -436,11 +436,30 @@
 
 /* Phones: the sidebar is a drawer, and the 2-column tool grid (3 rows of 44 px
    touch targets) pushed the first chat below the middle of the screen. Show
-   the tools as one row of icons; each keeps its label as aria-label/title. */
+   the tools as icons; each keeps its label as aria-label/title. The tools,
+   More tools and Customise share one grid of equal 44 px columns across the
+   drawer's whole width, so the team's twelve pages and the two buttons take
+   two rows from 360 px up (seven a row there, eight at 390 px). Beside a
+   separate box for the two buttons, five fitted a row at 375 px: three rows. */
 @media (max-width: 767px) {
-  .jf-workspace-tools {
+  .jf-workspaces {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(44px, 1fr));
+    gap: 2px;
+    padding-block: 4px;
+  }
+  .jf-workspaces > .jf-workspace-tools:first-of-type,
+  .jf-workspaces > .jf-workspace-footer {
+    display: contents;
+  }
+  /* The expanded list of other tools, and a load error, take a full row below. */
+  .jf-workspaces > .jf-workspace-footer ~ .jf-workspace-tools {
     display: flex;
     flex-wrap: wrap;
+  }
+  .jf-workspaces > .jf-workspace-footer ~ .jf-workspace-tools,
+  .jf-workspaces > :is(.jf-workspace-error, [role="status"]) {
+    grid-column: 1 / -1;
   }
   .jf-workspace-tool {
     flex: 1 0 44px;
@@ -451,28 +470,8 @@
   .jf-workspace-tool > span:not(.jf-workspace-badge):not([data-icon]) {
     display: none;
   }
-  /* The tools, More tools and Customise share one row instead of two, and the
-     expanded list of other tools takes the full width below them. */
-  .jf-workspaces {
-    flex-flow: row wrap;
-    align-items: center;
-    padding-block: 4px;
-  }
-  .jf-workspaces > .jf-workspace-tools:first-of-type {
-    flex: 1 1 0;
-    min-width: 0;
-  }
-  .jf-workspaces > .jf-workspace-tools + .jf-workspace-footer ~ .jf-workspace-tools,
-  .jf-workspaces > :is(.jf-workspace-error, [role="status"]) {
-    flex-basis: 100%;
-  }
-  .jf-workspace-footer {
-    flex: 0 0 auto;
-    gap: 2px;
-  }
   .jf-workspace-footer button {
     display: flex;
-    min-width: 44px;
     align-items: center;
     justify-content: center;
   }

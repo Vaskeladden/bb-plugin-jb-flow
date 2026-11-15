@@ -27,6 +27,20 @@ export const THREAD_STATE_STYLE: Record<ThreadStateId, { glyph: "spinner" | "que
   parked: { glyph: "pause", tone: "text-muted-foreground" },
 };
 
+/**
+ * A thread row's icon in its state's colour, the same as the filter chip. The
+ * row keeps a glyph that says more than the state does (an alert on a
+ * failure, a rocket on a release watch); the plain idle dot becomes the
+ * state's own glyph.
+ */
+export function inStateColour<T extends { glyph: string; tone: string }>(
+  detail: T,
+  state: ThreadStateId,
+): Omit<T, "glyph" | "tone"> & { glyph: T["glyph"] | (typeof THREAD_STATE_STYLE)[ThreadStateId]["glyph"]; tone: string } {
+  const style = THREAD_STATE_STYLE[state];
+  return { ...detail, tone: style.tone, glyph: detail.glyph === "dot" ? style.glyph : detail.glyph };
+}
+
 /** A promise to report back counts as stalled after the thread has been idle this long. */
 export const STALLED_AFTER_MS = 60 * 60_000;
 

@@ -2,6 +2,7 @@
 // produced an event. The sidebar shows elapsed time and flags runs that have
 // been silent for a long time ("stuck?"), which history shows do happen
 // (171 turns over an hour, one over four days).
+import { everyThread } from "./all-threads";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 export type Running = { since: number; lastEventAt: number };
@@ -44,8 +45,7 @@ export function createActivity(bb: BbPluginApi, changed: () => void) {
   bb.events.on("thread.archived", stop);
 
   // Threads already running when the plugin loads: best-effort start times.
-  void bb.sdk.threads
-    .list({ limit: 500 })
+  void everyThread((page) => bb.sdk.threads.list(page))
     .then((threads) => {
       for (const thread of threads) {
         if (thread.archivedAt === null && (thread.status === "active" || thread.status === "starting")) {

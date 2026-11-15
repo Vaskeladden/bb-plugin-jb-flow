@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import {
   useComposer,
   useRpc,
@@ -17,7 +17,23 @@ import "./live-activity.css";
 import { useMonitorCollapse } from "./monitor-collapse";
 import type { rpcContract } from "./server";
 import type { ThreadStatus } from "./thread-status";
-import { donkeyPrompt, revisePrompt, statusPrompt } from "./status-prompt";
+import { donkeyPrompt, revisePrompt } from "./status-prompt";
+import { currentPlatform, shortcutLabel, type Shortcut } from "./palette-model";
+
+export type StatusRequestKind = "status" | "donkey";
+/** Fired by the Status and Donkey commands; the focused thread's card answers it. */
+export const STATUS_REQUEST_EVENT = "jb-flow:request-status";
+export const STATUS_REQUEST_SHORTCUTS: Record<StatusRequestKind, Shortcut> = {
+  status: { key: "u", alt: true, shift: true },
+  donkey: { key: "i", alt: true, shift: true },
+};
+
+export function requestThreadStatus(threadId: string, kind: StatusRequestKind) {
+  window.dispatchEvent(new CustomEvent(STATUS_REQUEST_EVENT, { detail: { threadId, kind }, cancelable: true }));
+}
+
+const withShortcut = (title: string, kind: StatusRequestKind) =>
+  `${title} (${shortcutLabel(STATUS_REQUEST_SHORTCUTS[kind], currentPlatform())})`;
 
 type Sdk = ReturnType<typeof useSdk>;
 type Timeline = Awaited<ReturnType<Sdk["threads"]["timeline"]>>;
@@ -485,6 +501,7 @@ function AutoPromptMenu({
 const STATUS_OUTDATED_MS = 6 * 3_600_000;
 
 export function ActivityCard({
+  threadId,
   data,
   running,
   startedAt,
@@ -500,6 +517,7 @@ export function ActivityCard({
   monitorStale = false,
   hasLiveData = true,
   onRequestStatus,
+  onRequestUltrastatus,
   onRequestDonkey,
   onRequestRevise,
   parked,
@@ -511,6 +529,8 @@ export function ActivityCard({
   watches = [],
   onCancelWatch,
 }: {
+  /** The thread this card belongs to; its Status and Donkey shortcuts act only on it. */
+  threadId?: string;
   /** CI/review watches and release waits that will message this thread. */
   watches?: readonly { kind: "ci" | "release"; key: string; label: string }[];
   onCancelWatch?: (watch: { kind: "ci" | "release"; key: string }) => Promise<void>;
@@ -522,6 +542,8 @@ export function ActivityCard({
   monitorStale?: boolean;
   hasLiveData?: boolean;
   onRequestStatus?: () => Promise<void>;
+  /** Asks the agent for the thorough, checked report on the whole job, child threads included, shown in pictures. */
+  onRequestUltrastatus?: () => Promise<void>;
   /** Asks the agent to explain the problem in plain words, with decisions as buttons. */
   onRequestDonkey?: () => Promise<void>;
   /** Asks the agent to have Fable 5.2 or Codex review its plan, then continue with the revised plan. */
@@ -549,7 +571,9 @@ export function ActivityCard({
   const [clearing, setClearing] = useState(false);
   const [goalError, setGoalError] = useState<string | null>(null);
   const [requesting, setRequesting] = useState(false);
+  const inFlight = useRef(false);
   const [statusError, setStatusError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [togglingContinue, setTogglingContinue] = useState(false);
   const detailsId = useId();
   const tasks = activityTasks(data);
@@ -583,7 +607,8 @@ export function ActivityCard({
   const canRequest = !active && !!onRequestStatus;
   const outdated = canRequest && outdatedReason !== null;
   const send = async (request: (() => Promise<void>) | undefined, failure: string) => {
-    if (!request) return;
+    if (!request || inFlight.current) return;
+    inFlight.current = true;
     setRequesting(true);
     setStatusError(null);
     try {
@@ -591,12 +616,41 @@ export function ActivityCard({
     } catch {
       setStatusError(failure);
     } finally {
+      inFlight.current = false;
       setRequesting(false);
     }
   };
+  // Archive and Park sit in the heading, so a failure is said there, also with the monitor collapsed.
+  const runAction = async (action: () => Promise<void>, failure: string) => {
+    setActionError(null);
+    try {
+      await action();
+    } catch (error) {
+      const reason = error instanceof Error ? error.message.trim() : "";
+      setActionError(reason ? `${failure}: ${reason}` : `${failure}. Try again.`);
+    }
+  };
   const requestStatus = () => send(onRequestStatus, "Could not request status. Try again.");
+  const requestUltrastatus = () => send(onRequestUltrastatus, "Could not request the Ultrastatus. Try again.");
   const requestDonkey = () => send(onRequestDonkey, "Could not ask for the explanation. Try again.");
   const requestRevise = () => send(onRequestRevise, "Could not ask for the revision. Try again.");
+  const shortcutTargets = useRef({ status: requestStatus, donkey: requestDonkey, canRequest, hasDonkey: !!onRequestDonkey });
+  shortcutTargets.current = { status: requestStatus, donkey: requestDonkey, canRequest, hasDonkey: !!onRequestDonkey };
+  useEffect(() => {
+    if (!threadId) return;
+    const onRequest = (event: Event) => {
+      const detail = (event as CustomEvent<{ threadId?: string; kind?: StatusRequestKind }>).detail;
+      if (event.defaultPrevented || detail?.threadId !== threadId) return;
+      const targets = shortcutTargets.current;
+      // Same rules as the buttons: only while they show, and one request at a time.
+      if (!targets.canRequest || inFlight.current) return;
+      if (detail.kind === "donkey" && !targets.hasDonkey) return;
+      event.preventDefault();
+      void (detail.kind === "donkey" ? targets.donkey() : targets.status());
+    };
+    window.addEventListener(STATUS_REQUEST_EVENT, onRequest);
+    return () => window.removeEventListener(STATUS_REQUEST_EVENT, onRequest);
+  }, [threadId]);
   const steps = tasks.flatMap((task) => task.workflow?.agents ?? []);
   const finishedSteps = steps.filter(
     (step) => step.state === "done" || step.state === "skipped",
@@ -654,7 +708,7 @@ export function ActivityCard({
             type="button"
             className={archiveTone === "done" ? "jf-monitor-update" : "jf-monitor-update jf-monitor-update-quiet"}
             style={archiveTone === "done" ? { background: "var(--pr-merged, #8b5cf6)", color: "white" } : undefined}
-            onClick={() => void onArchive().catch(() => {})}
+            onClick={() => void runAction(onArchive, "Could not archive the thread")}
             title={archiveTone === "done" ? "All work is done and merged: archive this thread" : "Nothing left for the agent: archive this thread"}
           >
             Archive
@@ -666,9 +720,20 @@ export function ActivityCard({
             className={outdated ? "jf-monitor-update" : "jf-monitor-update jf-monitor-update-quiet"}
             disabled={requesting}
             onClick={requestStatus}
-            title="Ask the agent for a fresh status report"
+            title={withShortcut("Ask the agent for a fresh status report", "status")}
           >
             {requesting ? "Requesting…" : "Status"}
+          </button>
+        )}
+        {canRequest && onRequestUltrastatus && (
+          <button
+            type="button"
+            className="jf-monitor-update jf-monitor-update-quiet"
+            disabled={requesting}
+            onClick={requestUltrastatus}
+            title="Ask the agent for a thorough status of the whole job, child threads included: every claim checked, shown as a matrix of what is done and what is left. Takes a while and many tokens"
+          >
+            Ultrastatus
           </button>
         )}
         {canRequest && onRequestDonkey && (
@@ -677,7 +742,10 @@ export function ActivityCard({
             className="jf-monitor-update jf-monitor-update-quiet"
             disabled={requesting}
             onClick={requestDonkey}
-            title="Ask the agent what the real problem is, in plain words with an example, and for decisions you can answer with a click"
+            title={withShortcut(
+              "Ask the agent what the real problem is, in plain words with an example, and for decisions you can answer with a click",
+              "donkey",
+            )}
           >
             Donkey
           </button>
@@ -698,7 +766,7 @@ export function ActivityCard({
             type="button"
             className="jf-monitor-update jf-monitor-update-quiet"
             aria-pressed={parked}
-            onClick={() => void onTogglePark(!parked).catch(() => {})}
+            onClick={() => void runAction(() => onTogglePark(!parked), parked ? "Could not unpark the thread" : "Could not park the thread")}
             title={parked ? "Bring the thread back into Needs me, Autopilot or Ready" : "Put the thread aside: it leaves Needs me and the other lists until it runs again"}
           >
             {parked ? "Unpark" : "Park"}
@@ -734,6 +802,11 @@ export function ActivityCard({
           />
         </button>
       </div>
+      {actionError && (
+        <p role="alert" className="jf-monitor-error jf-monitor-action-error">
+          {actionError}
+        </p>
+      )}
       <div id={bodyId} hidden={collapsed} className="jf-monitor-body">
         {goal && !((!active || expanded) && monitor?.report) && (
           <div className="jf-live-goal">
@@ -1149,6 +1222,7 @@ export function LiveActivityBanner({
   return (
     <ActivityCard
       key={threadId}
+      threadId={threadId}
       data={activity}
       hasLiveData={!!data}
       idleLabel={
@@ -1167,7 +1241,10 @@ export function LiveActivityBanner({
       watches={wakeups.state?.watches ?? []}
       onCancelWatch={wakeups.cancel}
       onRequestStatus={async () => {
-        await rpc.call("thread_reply", { threadId, text: statusPrompt(values?.statusPrompt) });
+        await rpc.call("thread_status_request", { threadId, kind: "status" });
+      }}
+      onRequestUltrastatus={async () => {
+        await rpc.call("thread_status_request", { threadId, kind: "ultra" });
       }}
       onRequestDonkey={async () => {
         await rpc.call("thread_reply", { threadId, text: donkeyPrompt(values?.donkeyPrompt) });

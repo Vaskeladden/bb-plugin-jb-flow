@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { STALLED_AFTER_MS, THREAD_STATES, threadState, type ThreadStateFacts, type ThreadStateThread } from "./thread-states";
+import { inStateColour, STALLED_AFTER_MS, THREAD_STATE_STYLE, THREAD_STATES, threadState, type ThreadStateFacts, type ThreadStateThread } from "./thread-states";
 import { declaredState, flagsFor } from "./awaiting";
 
 const NOW = 1_800_000_000_000;
@@ -112,5 +112,26 @@ describe("declared states", () => {
     expect(flagsFor("autopilot", "Waiting for Alex to approve the PR.")).toEqual({ asks: false, promised: false, waiting: true });
     expect(flagsFor("ready")).toEqual({ asks: false, promised: false, waiting: false });
     expect(flagsFor("needs_you")).toEqual({ asks: true, promised: false, waiting: false });
+  });
+});
+
+describe("state colours", () => {
+  it("every state has its own colour", () => {
+    const tones = THREAD_STATES.map((state) => THREAD_STATE_STYLE[state].tone);
+    expect(new Set(tones).size).toBe(THREAD_STATES.length);
+  });
+
+  it("a thread row's icon wears its state's colour, whatever colour the row's own status had", () => {
+    for (const state of THREAD_STATES) {
+      const look = inStateColour({ glyph: "dot", tone: "text-muted-foreground", label: "Idle" }, state);
+      expect(look.tone).toBe(THREAD_STATE_STYLE[state].tone);
+      expect(look.glyph).toBe(THREAD_STATE_STYLE[state].glyph);
+      expect(look.label).toBe("Idle");
+    }
+  });
+
+  it("a glyph that says more than the state is kept, in the state's colour", () => {
+    const look = inStateColour({ glyph: "alert", tone: "text-red-500", label: "Failed" }, "needs");
+    expect(look).toEqual({ glyph: "alert", tone: THREAD_STATE_STYLE.needs.tone, label: "Failed" });
   });
 });

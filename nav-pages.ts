@@ -5,7 +5,7 @@ import { useSyncExternalStore } from "react";
 import type { ExperimentalSidebarNavigationItem } from "@get-bb/plugin-sdk/app";
 
 export type NavPage = { id: string; label: string };
-type Activate = (itemId: string) => void;
+type Activate = (itemId: string, split: boolean) => void;
 
 let pages: readonly NavPage[] = [];
 let activate: Activate | null = null;
@@ -22,8 +22,9 @@ export function publishNavPages(items: readonly ExperimentalSidebarNavigationIte
   for (const listener of listeners) listener();
 }
 
-export function openNavPage(id: string): void {
-  activate?.(id);
+/** Open a page; split puts it beside the current view, like ⌘-clicking its icon. */
+export function openNavPage(id: string, split = false): void {
+  activate?.(id, split);
 }
 
 export function useNavPages(): readonly NavPage[] {
