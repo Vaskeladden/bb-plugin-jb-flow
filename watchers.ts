@@ -18,7 +18,7 @@ import { everyThread } from "./all-threads.ts";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { CI_TIMEOUT_MS, logTargetOf, stepCiWatch, type CiWatch } from "./ci-watch.ts";
-import { GH_MISSING, pausedText, QuotaPausedError, type Reads } from "./github.ts";
+import { pausedText, QuotaPausedError, type Reads } from "./github.ts";
 import { prKey, runKey, type LightItem, type RunItem } from "./hub-model.ts";
 import { parseLimitHit } from "./limits.ts";
 import type { Hub, HubView } from "./pr-hub.ts";
@@ -339,11 +339,8 @@ export function createWatchers(
         : null;
       if (!environment?.branchName) throw new Error("No PR number given and the thread has no branch.");
       // The open PR, else the branch's newest (a merged branch is refused below as "already merged").
-      // While the hub is paused this throws its "Paused: GitHub quota low…" text.
-      const found = await reads.prForBranch(slug, environment.branchName).catch((error: Error) => {
-        if (error instanceof QuotaPausedError || error.message === GH_MISSING) throw error;
-        return null;
-      });
+      // A failed read throws as itself (paused, rate limited, gh missing), never as "No open PR".
+      const found = await reads.prForBranch(slug, environment.branchName);
       if (found === null) throw new Error(`No open PR for branch ${environment.branchName}.`);
       pr = found.number;
     }
@@ -398,7 +395,7 @@ export function createWatchers(
         // Not read this cycle. Paused: nothing to say. GitHub answered without
         // it: the PR is gone or out of reach (or never existed, for a watch
         // registered while paused), so say so and stop. A read error: try again
-        // next cycle, and give up silently after the usual timeout.
+        // next cycle; after the usual timeout, say why the watch ended and stop.
         if (view.missing.has(prKey(watch.repo, watch.pr))) {
           const entry = outbox.get(watch.threadId) ?? { notes: [], stillWatching: false };
           entry.notes.push(`${watch.repo}#${watch.pr} doesn't exist or isn't accessible; stopped watching. If you meant a PR in another repo, pass repo (owner/name).`);
@@ -407,6 +404,9 @@ export function createWatchers(
           removed.add(key);
         } else if (view.unreadable.has(prKey(watch.repo, watch.pr))) {
           if (Date.now() - watch.since > CI_TIMEOUT_MS) {
+            const entry = outbox.get(watch.threadId) ?? { notes: [], stillWatching: false };
+            entry.notes.push(`Stopped watching ${watch.repo}#${watch.pr}: GitHub's reads of it failed for ${CI_TIMEOUT_MS / 3_600_000} hours, so its checks are unknown. Check it yourself (pr_status) or call wait_for_ci again.`);
+            outbox.set(watch.threadId, entry);
             delete watches[key];
             removed.add(key);
             bb.log.warn(`ci ${key}: dropped after repeated read errors`);

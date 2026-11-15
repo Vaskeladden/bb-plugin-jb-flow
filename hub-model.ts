@@ -16,7 +16,8 @@
 // A base branch that requires nothing makes every check its gate, as GitHub's
 // own rollup does: green when the read shows all checks finished and none
 // failed, failed when any failed. So does a branch whose classic protection
-// could not be read and whose rulesets require nothing; the message says so.
+// GitHub won't show (403/404) and whose rulesets require nothing; the message
+// says so. Any other failure reading it leaves the required checks unknown.
 // Failed checks that are not required are named in the green or failed line.
 
 /** Check-run conclusions that fail a check. */

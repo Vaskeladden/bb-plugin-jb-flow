@@ -11,9 +11,11 @@ export const GH_MISSING = "The GitHub CLI (gh) isn't installed or isn't on PATH.
 
 /** Below this many points left on any GitHub counter, the plugin stops reading. */
 export const QUOTA_FLOOR = 1000;
-/** A rate-limit refusal without a known reset pauses at least this long. */
+/** A rate-limit refusal pauses at least this long; a secondary limit without retry-after, about this long. */
 const MIN_PAUSE_MS = 60_000;
 const RATE_LIMITED = /rate limit|secondary rate|abuse detection/i;
+const SECONDARY = /secondary rate|abuse detection/i;
+const RETRY_AFTER = /retry-after:?\s*(\d+)/i;
 
 export class RateLimitedError extends Error {}
 
@@ -27,6 +29,8 @@ export function ghError(prefix: string, error: Error & { code?: string | number 
 // --- quota ---------------------------------------------------------------------
 
 export type QuotaReading = { remaining: number; resetAt: number; at: number };
+/** One of GitHub's rate-limit windows (core, graphql) as GET /rate_limit reports it. */
+export type QuotaWindow = { remaining: number; resetAt: number };
 export type QuotaState = { paused: false } | { paused: true; resumesAt: number; reason: string };
 
 /**
@@ -54,9 +58,23 @@ export function createQuota(now: () => number = Date.now) {
       const known = counters.get(key);
       if (known === undefined || remaining <= known.remaining) counters.set(key, { remaining, resetAt: key, at: now() });
     },
-    /** GitHub refused a request for rate limits: stop until the latest known reset (never sooner than a minute). */
-    refused(reason: string, resets: number[]) {
-      const until = Math.max(now() + MIN_PAUSE_MS, ...resets.filter((at) => at > now()), ...[...counters.keys()].filter((at) => at > now()));
+    /**
+     * GitHub refused a request for rate limits. A window with nothing left is
+     * waited for until its reset. A secondary limit otherwise waits its
+     * retry-after, else a minute. A primary refusal the windows don't explain
+     * (GitHub's counters disagree) waits for every window's reset. Never
+     * less than a minute, unless retry-after says less.
+     */
+    refused(reason: string, windows: QuotaWindow[]) {
+      const live = windows.filter((window) => window.resetAt > now());
+      const spent = live.filter((window) => window.remaining <= 0).map((window) => window.resetAt);
+      let until: number;
+      if (SECONDARY.test(reason)) {
+        const retryAfter = RETRY_AFTER.exec(reason);
+        until = Math.max(now() + (retryAfter ? Number(retryAfter[1]) * 1000 : MIN_PAUSE_MS), ...spent);
+      } else {
+        until = Math.max(now() + MIN_PAUSE_MS, ...(spent.length > 0 ? spent : live.map((window) => window.resetAt)));
+      }
       refusedUntil = Math.max(refusedUntil ?? 0, until);
       refusedReason = reason;
     },
@@ -105,15 +123,19 @@ export function createGitHub(quota: Quota = createQuota(), runner: Runner = exec
   }
 
   async function onRateLimited(error: Error) {
-    // GET /rate_limit is free; its graphql/core resets are among the counters to wait for.
-    const reply = await runner(["api", "rate_limit", "--jq", "[.resources.core.reset, .resources.graphql.reset]"], 15_000).catch(() => null);
-    let resets: number[] = [];
+    // GET /rate_limit is free; it says which window (core, graphql) is spent and when it resets.
+    const reply = await runner(["api", "rate_limit", "--jq", "[.resources.core.remaining, .resources.core.reset, .resources.graphql.remaining, .resources.graphql.reset]"], 15_000).catch(() => null);
+    let windows: QuotaWindow[] = [];
     try {
-      resets = (JSON.parse(reply?.stdout ?? "[]") as number[]).map((seconds) => seconds * 1000);
+      const [coreLeft, coreReset, graphqlLeft, graphqlReset] = JSON.parse(reply?.stdout ?? "[]") as number[];
+      windows = [
+        { remaining: Number(coreLeft), resetAt: Number(coreReset) * 1000 },
+        { remaining: Number(graphqlLeft), resetAt: Number(graphqlReset) * 1000 },
+      ].filter((window) => Number.isFinite(window.remaining) && Number.isFinite(window.resetAt));
     } catch {
-      resets = [];
+      windows = [];
     }
-    quota.refused(error.message.slice(0, 200), resets);
+    quota.refused(error.message.slice(0, 300), windows);
   }
 
   /** Runs gh once. A rate-limit refusal pauses every reader; it is never retried. */
@@ -166,6 +188,8 @@ export type GitHub = ReturnType<typeof createGitHub>;
 // One function per question, so no other file builds gh commands.
 
 const RATE = "rateLimit { remaining resetAt }";
+/** Rulesets per page; GitHub's maximum (its default is 30). */
+const RULES_PAGE = 100;
 // eslint-disable-next-line no-control-regex
 const ANSI = /\x1b\[[0-9;]*[A-Za-z]/g;
 const repoArgs = (repo: string) => {
@@ -244,9 +268,10 @@ export function createReads(github: GitHub) {
      * branch protection. Classic required checks are read from the branch
      * itself, which shows them to anyone who can read the repo (the
      * protection endpoint answers a plain 404 to non-admins, the same as "not
-     * protected"; checked live on 11 Nov 2026). When the branch can't be
-     * read, the rulesets alone answer, marked `classicUnreadable`. Null when
-     * the rulesets can't be read: nothing is known.
+     * protected"; checked live on 11 Nov 2026). When GitHub refuses the
+     * branch (403 or 404), the rulesets alone answer, marked
+     * `classicUnreadable`. Null when the rulesets can't be read, or the branch
+     * read fails any other way (a 5xx, a network error): nothing is known.
      */
     async requiredChecks(repo: string, branch: string): Promise<RequiredChecks | null> {
       const keepRateLimits = (error: Error) => {
@@ -254,20 +279,26 @@ export function createReads(github: GitHub) {
         return null;
       };
       const names = new Set<string>();
-      const rules = await restJson<Array<{ type: string; parameters?: { required_status_checks?: Array<{ context: string }> } }>>(
-        `repos/${repo}/rules/branches/${encodeURIComponent(branch)}`,
-        `the rules of ${repo}:${branch}`,
-      ).catch(keepRateLimits);
-      if (rules === null) return null;
-      for (const rule of rules) if (rule.type === "required_status_checks") for (const check of rule.parameters?.required_status_checks ?? []) names.add(check.context);
+      type Rule = { type: string; parameters?: { required_status_checks?: Array<{ context: string }> } };
+      for (let page = 1; ; page += 1) {
+        const rules = await restJson<Rule[]>(`repos/${repo}/rules/branches/${encodeURIComponent(branch)}?per_page=${RULES_PAGE}&page=${page}`, `the rules of ${repo}:${branch}`).catch(keepRateLimits);
+        if (rules === null) return null;
+        for (const rule of rules) if (rule.type === "required_status_checks") for (const check of rule.parameters?.required_status_checks ?? []) names.add(check.context);
+        if (rules.length < RULES_PAGE) break;
+      }
       type Classic = { enforcement_level?: string; contexts?: string[]; checks?: Array<{ context: string }> };
-      const classic = await restJson<{ protection?: { required_status_checks?: Classic } }>(`repos/${repo}/branches/${encodeURIComponent(branch)}`, `the branch ${repo}:${branch}`).catch(keepRateLimits);
-      const checks = classic?.protection?.required_status_checks;
+      const refused = Symbol("refused");
+      const classic = await restJson<{ protection?: { required_status_checks?: Classic } }>(`repos/${repo}/branches/${encodeURIComponent(branch)}`, `the branch ${repo}:${branch}`).catch((error: Error) => {
+        keepRateLimits(error);
+        return /\(HTTP 40[34]\)/.test(error.message) ? refused : null;
+      });
+      if (classic === null) return null;
+      const checks = classic === refused ? undefined : classic.protection?.required_status_checks;
       if (checks && checks.enforcement_level !== "off") {
         for (const context of checks.contexts ?? []) names.add(context);
         for (const check of checks.checks ?? []) names.add(check.context);
       }
-      return { names: [...names].sort(), classicUnreadable: classic === null };
+      return { names: [...names].sort(), classicUnreadable: classic === refused };
     },
     /** Merged PRs into a base, newest first (release watcher). */
     async mergedPrs(repo: string, base: string, limit: number): Promise<Array<{ number: number; title: string; mergedAt: string; mergeCommit: { oid: string } | null }>> {

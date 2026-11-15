@@ -11,8 +11,9 @@
 // cycle (`soon`) takes the place of a scheduled one, so nothing reads more
 // often than once a minute.
 //
-// Below the quota floor, or after GitHub refuses a request for rate limits,
-// the hub reads nothing until the counter resets (github.ts). A CI verdict
+// Below the quota floor the hub reads nothing until the counter resets; after
+// a rate-limit refusal, until the spent window resets or, for a secondary
+// limit, about a minute (github.ts `refused`). A CI verdict
 // comes only from this cycle's reads (hub-model.ts `checksVerdict`), so
 // nothing is reported from a read that was not made.
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
@@ -49,6 +50,33 @@ export type Interest = {
   /** A CI or run watch is open: read every minute instead of every third. */
   urgent: boolean;
 };
+
+/**
+ * What the hub reads: the PRs threads linked and the CI and run watches. Each
+ * source is asked on its own, so one that fails (a corrupt stored row, a
+ * thread list that can't be read) is logged and the others are still read.
+ */
+export async function gatherInterest(
+  warn: (text: string) => void,
+  linked: () => Promise<LightItem[]>,
+  watched: () => Promise<{ prs: Array<LightItem & { watched: boolean }>; runs: RunItem[] }>,
+): Promise<Interest> {
+  const quietly = <T>(what: string, read: () => Promise<T>, empty: T) =>
+    Promise.resolve()
+      .then(read)
+      .catch((error: unknown) => {
+        warn(`github hub: ${what}: ${String(error)}`);
+        return empty;
+      });
+  const [links, watches] = await Promise.all([quietly("linked PRs", linked, []), quietly("watches", watched, { prs: [], runs: [] })]);
+  const prs = new Map<string, Interest["prs"][number]>();
+  for (const pr of links) prs.set(`${pr.repo}#${pr.number}`, { ...pr, watched: false });
+  for (const pr of watches.prs) {
+    const known = prs.get(`${pr.repo}#${pr.number}`);
+    prs.set(`${pr.repo}#${pr.number}`, { ...pr, feedback: pr.feedback || (known?.feedback ?? false) });
+  }
+  return { prs: [...prs.values()], runs: watches.runs, urgent: watches.prs.length + watches.runs.length > 0 };
+}
 
 /** One cycle's results, handed to the watchers and the PR list. */
 export type HubView = {

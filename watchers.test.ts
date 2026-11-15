@@ -14,7 +14,9 @@ const ok = (value: unknown) => ({ stdout: JSON.stringify(value), stderr: "", err
 
 type World = {
   prState?: "OPEN" | "MERGED" | "CLOSED" | null; // null: no such PR
-  branchPr?: { number: number; state: string } | null;
+  branchPr?: { number: number; state: string } | null | "rate-limited";
+  /** The shared PR read fails (not a rate limit): the PR is unreadable this cycle. */
+  lightFails?: boolean;
   checks?: "green" | "lint-failed";
   run?: { status: string; conclusion: string | null; failed: number } | null;
 };
@@ -26,6 +28,7 @@ function fakeGh(world: World) {
     const query = args[1] === "graphql" ? args[3]!.slice("query=".length) : "";
     const rate = { rateLimit: { remaining: 4000, resetAt: RESET() } };
     if (query.includes("open: pullRequests")) {
+      if (world.branchPr === "rate-limited") return failure("GraphQL: API rate limit already exceeded for user ID 1.");
       const nodes = world.branchPr ? [world.branchPr] : [];
       return ok({ data: { ...rate, repository: { open: { nodes: nodes.filter((pr) => pr.state === "OPEN") }, any: { nodes } } } });
     }
@@ -33,6 +36,7 @@ function fakeGh(world: World) {
       return ok({ data: { ...rate, repository: { pullRequest: world.prState ? { state: world.prState, title: "Fix login", createdAt: "2026-11-10T09:00:00Z" } : null } } });
     }
     if (query.includes("viewer { login }")) {
+      if (world.lightFails) return failure("gh: Something went wrong while executing your query (HTTP 502)");
       const data: Record<string, unknown> = { ...rate, viewer: { login: "sam" } };
       const errors: Array<{ message: string }> = [];
       if (query.includes("p12:")) {
@@ -152,6 +156,11 @@ test("wait_for_ci on a branch without any PR", async () => {
   await assert.rejects(watchers.watchCi("t1", {}), /No open PR for branch fix-login/);
 });
 
+test("wait_for_ci while GitHub refuses for rate limits says so, never \"No open PR\"", async () => {
+  const { watchers } = setup({ branchPr: "rate-limited" });
+  await assert.rejects(watchers.watchCi("t1", {}), (error: Error) => /rate limit/i.test(error.message) && !/No open PR/.test(error.message));
+});
+
 test("green: the thread is told once and a checks watch ends", async () => {
   const { hub, watchers, sent, kv } = setup({ prState: "OPEN", checks: "green" });
   await watchers.watchCi("t1", { pr: 12, watchFor: "checks" });
@@ -191,6 +200,24 @@ test("registered while paused, then the PR turns out not to exist: the thread is
   await hub.cycle();
   assert.match(sent[0]!.text, /acme\/web-app#12 doesn't exist or isn't accessible; stopped watching/);
   assert.deepEqual(kv.get("ciWatches"), {});
+});
+
+test("a PR that can't be read for 3 hours: the thread is told once why the watch ended", async () => {
+  const world: World = { prState: "OPEN", checks: "green" };
+  const { hub, watchers, sent, kv } = setup(world);
+  await watchers.watchCi("t1", { pr: 12, watchFor: "checks" });
+  world.lightFails = true;
+  await hub.cycle();
+  assert.equal(sent.length, 0); // one failed read: try again next cycle
+  const watches = kv.get("ciWatches") as Record<string, { since: number }>;
+  for (const watch of Object.values(watches)) watch.since = Date.now() - 4 * 60 * 60_000;
+  kv.set("ciWatches", watches);
+  await hub.cycle();
+  assert.equal(sent.length, 1);
+  assert.match(sent[0]!.text, /^\[ci watcher\] Stopped watching acme\/web-app#12: GitHub's reads of it failed for 3 hours/);
+  assert.deepEqual(kv.get("ciWatches"), {});
+  await hub.cycle();
+  assert.equal(sent.length, 1);
 });
 
 test("run watch: a failed run names its failed jobs and how many more", async () => {

@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createGitHub, createQuota, createReads, type Runner } from "./github.ts";
-import { createHub, type Interest } from "./pr-hub.ts";
+import { createHub, gatherInterest, type Interest } from "./pr-hub.ts";
 
 const REPO = "acme/web-app";
 const HEAD = "abc1234def";
@@ -70,8 +70,10 @@ type Script = {
   lightRemaining?: number;
   detail?: { pairs: Pairs; suites: Suite[]; oid?: string; totalCount?: number } | "error";
   rules?: string[] | "error";
-  /** Classic protection's required checks; "error" when the branch can't be read. */
-  classic?: string[] | "error";
+  /** Rulesets page by page (100 a page), instead of `rules`. */
+  rulePages?: Array<Array<{ type: string; parameters?: unknown }>>;
+  /** Classic protection's required checks, or the HTTP failure reading the branch gives. */
+  classic?: string[] | "403" | "404" | "502";
 };
 
 function fakeGh(script: Script) {
@@ -95,11 +97,14 @@ function fakeGh(script: Script) {
     if (args[1]?.includes("/rules/branches/")) {
       calls.push("rules");
       if (script.rules === "error") return fail("gh: Server Error (HTTP 502)");
+      if (script.rulePages) return { stdout: JSON.stringify(script.rulePages[Number(/[?&]page=(\d+)/.exec(args[1])?.[1] ?? 1) - 1] ?? []), stderr: "", error: null };
       return { stdout: JSON.stringify([{ type: "required_status_checks", parameters: { required_status_checks: (script.rules ?? ["Build", "Merge Gate"]).map((context) => ({ context })) } }]), stderr: "", error: null };
     }
     if (/\/branches\/[^/]+$/.test(args[1] ?? "")) {
       calls.push("branch");
-      if (script.classic === "error") return fail("gh: Resource not accessible by personal access token (HTTP 403)");
+      if (script.classic === "403") return fail("gh: Resource not accessible by personal access token (HTTP 403)");
+      if (script.classic === "404") return fail("gh: Branch not found (HTTP 404)");
+      if (script.classic === "502") return fail("gh: Server Error (HTTP 502)");
       return { stdout: JSON.stringify({ protected: true, protection: { required_status_checks: { enforcement_level: script.classic ? "everyone" : "off", contexts: script.classic ?? [], checks: [] } } }), stderr: "", error: null };
     }
     if (args[1] === "rate_limit") return { stdout: "[0, 0]", stderr: "", error: null };
@@ -259,12 +264,29 @@ test("classic required checks come from the branch; when it can't be read, the r
   const classic = await verdictOf({ light: ALL_DONE, rules: ["Merge Gate"], classic: ["Build"], detail: { pairs: ALL_DONE, suites: [{ id: 1, gate: [passed()] }] } });
   assert.match(classic.kind === "pending" ? classic.waitingFor : "", /Build \(not created yet\)/);
   // Branch unreadable, rulesets name the gate: judged on the gate.
-  const rulesOnly = await verdictOf({ light: [["SUCCESS", 9], ["FAILURE", 1]], rules: ["Merge Gate"], classic: "error", detail: { pairs: [["SUCCESS", 9], ["FAILURE", 1]], suites: [{ id: 1, gate: [passed()], failed: [{ name: "Docs Preview" }] }] } });
+  const rulesOnly = await verdictOf({ light: [["SUCCESS", 9], ["FAILURE", 1]], rules: ["Merge Gate"], classic: "403", detail: { pairs: [["SUCCESS", 9], ["FAILURE", 1]], suites: [{ id: 1, gate: [passed()], failed: [{ name: "Docs Preview" }] }] } });
   assert.equal(rulesOnly.kind, "green");
   // Branch unreadable and no rulesets: every check decides, and the message says why.
-  const all = await verdictOf({ light: [["SUCCESS", 10]], rules: [], classic: "error", detail: { pairs: [["SUCCESS", 10]], suites: [{ id: 1 }] } });
+  const all = await verdictOf({ light: [["SUCCESS", 10]], rules: [], classic: "404", detail: { pairs: [["SUCCESS", 10]], suites: [{ id: 1 }] } });
   assert.equal(all.kind, "green");
   assert.equal(all.kind === "green" && all.note, "required checks not readable; judged on all checks");
+});
+
+test("classic protection that fails for another reason (a 502, a network error) leaves required checks unknown, and is not cached", async () => {
+  const reads: Pairs[] = [ALL_DONE, [["SUCCESS", 553]]];
+  const { hub, calls } = setup({ light: () => reads.shift() ?? ALL_DONE, rules: ["Merge Gate"], classic: "502", detail: { pairs: ALL_DONE, suites: [{ id: 1, gate: [passed()] }] } });
+  const first = (await hub.cycle())!.verdict(REPO, 12)!;
+  assert.equal(first.kind, "pending");
+  assert.match(first.kind === "pending" ? first.waitingFor : "", /required checks \(could not read them\)/);
+  assert.equal((await hub.cycle())!.verdict(REPO, 12)!.kind, "pending");
+  assert.equal(calls.filter((call) => call === "branch").length, 2);
+});
+
+test("rulesets are read page by page, so a required check on the second page counts", async () => {
+  const filler = Array.from({ length: 99 }, () => ({ type: "deletion" }));
+  const required = (context: string) => ({ type: "required_status_checks", parameters: { required_status_checks: [{ context }] } });
+  const verdict = await verdictOf({ light: ALL_DONE, rulePages: [[...filler, required("Build")], [required("Merge Gate")]], detail: { pairs: ALL_DONE, suites: [{ id: 1, build: [passed()] }] } });
+  assert.match(verdict.kind === "pending" ? verdict.waitingFor : verdict.kind, /Merge Gate \(not created yet\)/);
 });
 
 test("a failure in a workflow with no required check does not fail the PR", async () => {
@@ -318,6 +340,21 @@ test("a PR GitHub answers without is missing; a failed query leaves it unreadabl
   const view2 = (await createHub(bb, github2, createReads(github2), async () => wanted).cycle())!;
   assert.deepEqual([...view2.unreadable].sort(), [`${REPO}#12`, `${REPO}/runs/99`]);
   assert.equal(view2.missing.size, 0);
+});
+
+test("one interest source failing (a corrupt stored PR row) is logged and does not stop the CI and run watches", async () => {
+  const warnings: string[] = [];
+  const run = { repo: REPO, runId: 77 };
+  const watched = async () => ({ prs: [{ repo: REPO, number: 12, feedback: true, watched: true }], runs: [run] });
+  const wanted = await gatherInterest((text) => warnings.push(text), async () => { throw new SyntaxError("Unexpected token in JSON"); }, watched);
+  assert.deepEqual(wanted, { prs: [{ repo: REPO, number: 12, feedback: true, watched: true }], runs: [run], urgent: true });
+  assert.match(warnings[0] ?? "", /linked PRs: SyntaxError: Unexpected token/);
+  // Both sources: a linked PR someone also watches keeps the watch, and asks for feedback if either does.
+  const both = await gatherInterest(() => undefined, async () => [{ repo: REPO, number: 12, feedback: false }, { repo: REPO, number: 13, feedback: false }], watched);
+  assert.deepEqual(both.prs, [{ repo: REPO, number: 12, feedback: true, watched: true }, { repo: REPO, number: 13, feedback: false, watched: false }]);
+  const noWatches = await gatherInterest((text) => warnings.push(text), async () => [], async () => { throw new Error("kv down"); });
+  assert.deepEqual(noWatches, { prs: [], runs: [], urgent: false });
+  assert.match(warnings[1] ?? "", /watches: Error: kv down/);
 });
 
 test("runs are read in the light query, beyond the first 60 too", async () => {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createdPrs, orderStack, type PrStatus } from "./prs.ts";
+import { createdPrs, orderStack, parseRows, prStatusSchema, type PrStatus } from "./prs.ts";
 
 const pr = (number: number, base: string, head: string, repo = "o/a"): PrStatus => ({
   repo, number, title: `#${number}`, url: "", state: "open", attention: "review_requested",
@@ -34,3 +34,17 @@ test("PRs a thread created, from commands, tools and its own words", () => {
   assert.deepEqual(createdPrs({ type: "agentMessage", text: `I reviewed ${url}; two comments.` }), []);
 });
 
+
+test("a corrupt stored PR row is skipped and logged, the rest still read", () => {
+  const warnings: string[] = [];
+  const good: PrStatus = { repo: "acme/web-app", number: 12, title: "Fix login", url: "u", state: "open", attention: "checks_pending", base: "main", head: "fix-login", stackedOn: null, checkedAt: 1 };
+  const rows = [
+    { id: "acme/web-app#12", json: JSON.stringify(good) },
+    { id: "acme/web-app#13", json: '{"repo": "acme/web-app", "num' },
+    { id: "acme/web-app#14", json: JSON.stringify({ repo: "acme/web-app" }) },
+  ];
+  const read = parseRows<PrStatus>("pr_status", rows, (text) => warnings.push(text), (value) => prStatusSchema.safeParse(value).success);
+  assert.deepEqual(read, { "acme/web-app#12": good });
+  assert.equal(warnings.length, 2);
+  assert.match(warnings[0]!, /pr_status row acme\/web-app#13 skipped/);
+});

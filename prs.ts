@@ -111,6 +111,21 @@ export function orderStack(prs: PrStatus[]): PrStatus[] {
   return ordered;
 }
 
+/** Stored rows by id. A row that is not JSON, or that `valid` rejects, is skipped and logged instead of failing the whole read. */
+export function parseRows<T>(table: string, rows: Array<{ id: string; json: string }>, warn: (text: string) => void, valid: (value: unknown) => boolean = () => true): Record<string, T> {
+  const out: Record<string, T> = {};
+  for (const row of rows) {
+    try {
+      const value: unknown = JSON.parse(row.json);
+      if (!valid(value)) throw new Error("does not match the stored shape");
+      out[row.id] = value as T;
+    } catch (error) {
+      warn(`${table} row ${row.id} skipped: ${String(error)}`);
+    }
+  }
+  return out;
+}
+
 export function createPrTracker(bb: BbPluginApi, changed: () => void, hub: Hub) {
   const kv = bb.storage.kv;
   // PR data lives in the plugin's own SQLite database: kv values are capped at
@@ -120,9 +135,9 @@ export function createPrTracker(bb: BbPluginApi, changed: () => void, hub: Hub) 
     "CREATE TABLE pr_status (key TEXT PRIMARY KEY, json TEXT NOT NULL)",
     "CREATE TABLE thread_prs (thread_id TEXT PRIMARY KEY, json TEXT NOT NULL)",
   ]);
-  function readTable<T>(table: "pr_status" | "thread_prs", column: "key" | "thread_id"): Record<string, T> {
+  function readTable<T>(table: "pr_status" | "thread_prs", column: "key" | "thread_id", valid?: (value: unknown) => boolean): Record<string, T> {
     const rows = db().prepare(`SELECT ${column} AS id, json FROM ${table}`).all() as Array<{ id: string; json: string }>;
-    return Object.fromEntries(rows.map((row) => [row.id, JSON.parse(row.json) as T]));
+    return parseRows<T>(table, rows, (text) => bb.log.warn(`pr storage: ${text}`), valid);
   }
   function writeTable(table: "pr_status" | "thread_prs", column: "key" | "thread_id", value: Record<string, unknown>) {
     const handle = db();
@@ -168,7 +183,7 @@ export function createPrTracker(bb: BbPluginApi, changed: () => void, hub: Hub) 
     });
   const getStatus = async () => {
     await moved;
-    return readTable<PrStatus>("pr_status", "key");
+    return readTable<PrStatus>("pr_status", "key", (value) => prStatusSchema.safeParse(value).success);
   };
 
   /** Reads new completed commands since the thread's cursor and links PRs it created. */

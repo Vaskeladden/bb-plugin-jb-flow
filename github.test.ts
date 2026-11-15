@@ -85,7 +85,7 @@ test("a rate-limit refusal pauses every read and is not retried", async () => {
   let calls = 0;
   const runner: Runner = async (args) => {
     calls += 1;
-    if (args[1] === "rate_limit") return { stdout: "[1794400000, 1794401000]", stderr: "", error: null };
+    if (args[1] === "rate_limit") return { stdout: "[4000, 1794400000, 0, 1794401000]", stderr: "", error: null };
     return { stdout: "", stderr: "GraphQL: API rate limit already exceeded for user ID 1.", error: Object.assign(new Error("exit 1"), { code: 1 }) };
   };
   const github = createGitHub(createQuota(), runner);
@@ -95,6 +95,33 @@ test("a rate-limit refusal pauses every read and is not retried", async () => {
   await assert.rejects(github.gh(["api", "user"], "the user"), QuotaPausedError);
   assert.equal(calls, 2);
   assert.equal(github.quota.state().paused, true);
+});
+
+test("a refusal waits for a window's reset only when that window is spent; a secondary limit waits its retry-after or a minute", () => {
+  const now = Date.parse("2026-11-11T11:30:00Z");
+  const hour = Date.parse("2026-11-11T12:20:00Z");
+  const soon = Date.parse("2026-11-11T11:50:00Z");
+  const resumes = (reason: string, windows: Array<{ remaining: number; resetAt: number }>, known?: number) => {
+    const quota = createQuota(() => now);
+    if (known !== undefined) quota.record(4000, known);
+    quota.refused(reason, windows);
+    const state = quota.state();
+    return state.paused ? state.resumesAt : null;
+  };
+  const fine = [{ remaining: 4000, resetAt: hour }, { remaining: 3000, resetAt: soon }];
+  const secondary = "gh api graphql: You have exceeded a secondary rate limit. Please wait a few minutes before you try again.";
+  // A secondary limit with nothing spent: about a minute, not the hourly reset, even with counters known.
+  assert.equal(resumes(secondary, fine), now + 60_000);
+  assert.equal(resumes(secondary, fine, hour), now + 60_000);
+  assert.equal(resumes(`${secondary} retry-after: 120`, fine), now + 120_000);
+  // A spent window is waited for, whatever the refusal said.
+  assert.equal(resumes(secondary, [{ remaining: 4000, resetAt: hour }, { remaining: 0, resetAt: soon }]), soon);
+  // A primary refusal: the spent window's reset, not the later one of a window with points left.
+  const primary = "GraphQL: API rate limit already exceeded for user ID 1.";
+  assert.equal(resumes(primary, [{ remaining: 4000, resetAt: hour }, { remaining: 0, resetAt: soon }]), soon);
+  // A primary refusal the reading does not explain: every window's reset; unreadable windows: a minute.
+  assert.equal(resumes(primary, fine), hour);
+  assert.equal(resumes(primary, []), now + 60_000);
 });
 
 test("a GraphQL answer below the floor pauses the next read", async () => {

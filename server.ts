@@ -23,7 +23,7 @@ import { nextMove, parseDecisionOptions } from "./decisions";
 import { createLeftovers, leftoverSchema } from "./leftovers";
 import { createFocus, focusReportSchema, needsAttention } from "./focus";
 import { createGitHub, createReads, pausedText } from "./github";
-import { createHub, type Interest } from "./pr-hub";
+import { createHub, gatherInterest } from "./pr-hub";
 import { createPrTracker, prStatusSchema, type PrStatus } from "./prs";
 import { createUnreleased, unreleasedSchema } from "./unreleased";
 import { laneSections } from "./lanes";
@@ -773,16 +773,9 @@ export default async function plugin(bb: BbPluginApi) {
   const github = createGitHub();
   const reads = createReads(github);
   // Late-bound: the PR tracker and the watchers are created below, with the hub.
-  const hub = createHub(bb, github, reads, async () => {
-    const [linked, watched] = await Promise.all([prTracker.interest(), watchers.interest()]);
-    const prs = new Map<string, Interest["prs"][number]>();
-    for (const pr of linked) prs.set(`${pr.repo}#${pr.number}`, { ...pr, watched: false });
-    for (const pr of watched.prs) {
-      const known = prs.get(`${pr.repo}#${pr.number}`);
-      prs.set(`${pr.repo}#${pr.number}`, { ...pr, feedback: pr.feedback || (known?.feedback ?? false) });
-    }
-    return { prs: [...prs.values()], runs: watched.runs, urgent: watched.prs.length + watched.runs.length > 0 };
-  });
+  const hub = createHub(bb, github, reads, () =>
+    gatherInterest((text) => bb.log.warn(text), () => prTracker.interest(), () => watchers.interest()),
+  );
   const unreleased = createUnreleased(bb, reads);
   const machines = createMachines(bb);
   const prTracker = createPrTracker(bb, changed, hub);
