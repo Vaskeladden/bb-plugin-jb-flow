@@ -115,6 +115,26 @@ test("a required check reported as a commit status counts when no check run has 
   assert.equal(checksVerdict(light(), read, RULES).kind, "failed");
 });
 
+test("a required check whose newest run is still queued stays pending, whatever order the suites come in", () => {
+  const queued = { name: "Merge Gate", state: "pending" as const, startedAt: null, url: null };
+  const older = passed("Merge Gate", NOW - 600_000);
+  const unstartedPass = { ...passed("Merge Gate"), startedAt: null };
+  const suite = (required: PrDetail["suites"][number]["required"]) => ({ failed: [], failedMore: 0, required });
+  for (const order of [[queued, older], [older, queued], [queued, unstartedPass], [unstartedPass, queued]]) {
+    const read = detail({ suites: [suite([passed("Build")]), ...order.map((run) => suite([run]))] });
+    assert.deepEqual(requiredStates(read, REQUIRED).map((state) => state.state), ["passed", "pending"]);
+    assert.equal(checksVerdict(light(), read, RULES).kind, "pending");
+  }
+  // A required commit status still PENDING or EXPECTED is not green either.
+  for (const state of ["PENDING", "EXPECTED"]) {
+    const answer = {
+      commits: { nodes: [{ commit: { oid: "abc1234def", statusCheckRollup: null, status: { contexts: [{ context: "Merge Gate", state, targetUrl: null }] }, checkSuites: { totalCount: 1, nodes: [{ failed: { totalCount: 0, nodes: [] }, q0: { nodes: [{ name: "Build", status: "COMPLETED", conclusion: "SUCCESS", startedAt: "2026-11-11T11:00:00Z", detailsUrl: null }] }, q1: { nodes: [] } }] } } }] },
+    };
+    const read = readDetail(answer, REQUIRED, light(), NOW)!;
+    assert.equal(checksVerdict(light(), read, RULES).kind, "pending", state);
+  }
+});
+
 test("a detail read of another head is not used", () => {
   const answer = { commits: { nodes: [{ commit: { oid: "other", statusCheckRollup: null, status: null, checkSuites: { totalCount: 0, nodes: [] } } }] } };
   assert.equal(readDetail(answer, REQUIRED, light(), NOW), null);

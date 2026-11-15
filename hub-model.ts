@@ -322,9 +322,13 @@ export function requiredStates(detail: PrDetail, required: string[]): RequiredSt
     for (const suite of detail.suites) {
       for (const run of suite.required) {
         if (run.name !== name) continue;
+        if (best === null) {
+          best = run;
+          continue;
+        }
         const mine = run.startedAt ?? Infinity;
-        const theirs = best?.startedAt ?? -Infinity;
-        if (best === null || mine > theirs || (mine === theirs && run.state !== "passed")) best = run;
+        const theirs = best.startedAt ?? Infinity;
+        if (mine > theirs || (mine === theirs && run.state !== "passed")) best = run;
       }
     }
     if (best) return { name, state: best.state, url: best.url };
