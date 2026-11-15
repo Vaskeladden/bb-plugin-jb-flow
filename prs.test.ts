@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createdPrs, orderStack, refsToRefreshAfterTurn, type PrStatus } from "./prs.ts";
+import { createdPrs, orderStack, parseRows, prStatusSchema, type PrStatus } from "./prs.ts";
 
 const pr = (number: number, base: string, head: string, repo = "o/a"): PrStatus => ({
   repo, number, title: `#${number}`, url: "", state: "open", attention: "review_requested",
@@ -34,23 +34,17 @@ test("PRs a thread created, from commands, tools and its own words", () => {
   assert.deepEqual(createdPrs({ type: "agentMessage", text: `I reviewed ${url}; two comments.` }), []);
 });
 
-test("a PR the thread already had is re-checked when its turn ends", () => {
-  // The turn ran `gh pr merge` on #12: no new PR was created, but #12's
-  // cached "open" must not outlive the turn.
-  const linked = [
-    { repo: "acme/web-app", number: 12 },
-    { repo: "acme/web-app", number: 9 },
-    { repo: "acme/billing-api", number: 4 },
-    { repo: "acme/web-app", number: 30 },
+
+test("a corrupt stored PR row is skipped and logged, the rest still read", () => {
+  const warnings: string[] = [];
+  const good: PrStatus = { repo: "acme/web-app", number: 12, title: "Fix login", url: "u", state: "open", attention: "checks_pending", base: "main", head: "fix-login", stackedOn: null, checkedAt: 1 };
+  const rows = [
+    { id: "acme/web-app#12", json: JSON.stringify(good) },
+    { id: "acme/web-app#13", json: '{"repo": "acme/web-app", "num' },
+    { id: "acme/web-app#14", json: JSON.stringify({ repo: "acme/web-app" }) },
   ];
-  const status = {
-    "acme/web-app#12": { state: "open" as const },
-    "acme/web-app#9": { state: "merged" as const },
-    "acme/billing-api#4": { state: "draft" as const },
-    // #30 was linked but never fetched.
-  };
-  const created = [{ repo: "acme/web-app", number: 31 }];
-  const refs = refsToRefreshAfterTurn(linked, status, created).map((ref) => `${ref.repo}#${ref.number}`).sort();
-  assert.deepEqual(refs, ["acme/billing-api#4", "acme/web-app#12", "acme/web-app#30", "acme/web-app#31"]);
-  assert.deepEqual(refsToRefreshAfterTurn([{ repo: "acme/web-app", number: 9 }], status, []), []);
+  const read = parseRows<PrStatus>("pr_status", rows, (text) => warnings.push(text), (value) => prStatusSchema.safeParse(value).success);
+  assert.deepEqual(read, { "acme/web-app#12": good });
+  assert.equal(warnings.length, 2);
+  assert.match(warnings[0]!, /pr_status row acme\/web-app#13 skipped/);
 });

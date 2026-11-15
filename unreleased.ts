@@ -7,7 +7,7 @@
 // "Merge pull request #123" merges), with details from one GraphQL query.
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
-import { gh, ghGraphql } from "./prs.ts";
+import type { Reads } from "./github";
 
 export const unreleasedSchema = z.object({
   repo: z.string().nullable(),
@@ -42,10 +42,9 @@ export function prFromSubject(subject: string): number | "skip" | null {
   return squash ? Number(squash[1]) : null;
 }
 
-const api = async <T>(path: string): Promise<T> => JSON.parse(await gh(["api", path])) as T;
-const exists = (path: string) => api<{ name?: string }>(path).then((value) => value, () => null);
-
-async function findBase(repo: string, head: string): Promise<{ base: string; baseKind: "branch" | "tag" } | null> {
+async function findBase(reads: Reads, repo: string, head: string): Promise<{ base: string; baseKind: "branch" | "tag" } | null> {
+  const api = reads.rest;
+  const exists = (path: string) => api<{ name?: string }>(path).then((value) => value, () => null);
   for (const branch of RELEASE_BRANCHES) {
     if (branch === head) continue;
     // GitHub redirects master -> main, so check the name that came back.
@@ -59,29 +58,11 @@ async function findBase(repo: string, head: string): Promise<{ base: string; bas
   return tag ? { base: tag.name, baseKind: "tag" } : null;
 }
 
-type GqlPr = { number: number; title: string; url: string; mergedAt: string | null; author: { login: string } | null };
-
-async function prDetails(repo: string, numbers: number[]): Promise<GqlPr[]> {
-  const [owner, name] = repo.split("/");
-  const out: GqlPr[] = [];
-  for (let i = 0; i < numbers.length; i += 100) {
-    const fields = numbers
-      .slice(i, i + 100)
-      .map((n) => `p${n}: pullRequest(number: ${n}) { number title url mergedAt author { login } }`)
-      .join("\n");
-    const query = `query { repository(owner: ${JSON.stringify(owner)}, name: ${JSON.stringify(name)}) { ${fields} } }`;
-    // An issue number in a commit subject ("(#123)") resolves to null with an
-    // error; the PRs around it still come back.
-    const data = await ghGraphql<{ repository?: Record<string, GqlPr | null> }>(query);
-    out.push(...Object.values(data.repository ?? {}).filter((pr): pr is GqlPr => pr !== null));
-  }
-  return out;
-}
-
-async function compute(repo: string): Promise<Unreleased> {
+async function compute(reads: Reads, repo: string): Promise<Unreleased> {
+  const api = reads.rest;
   const empty = { repo, head: null, base: null, baseKind: null, releasedAt: null, compareUrl: null, prs: [], directCommits: 0, checkedAt: Date.now() };
   const { default_branch: head } = await api<{ default_branch: string }>(`repos/${repo}`);
-  const found = await findBase(repo, head);
+  const found = await findBase(reads, repo, head);
   if (!found) return { ...empty, head, error: `No release branch or version tag found in ${repo}.` };
   const { base, baseKind } = found;
   const [compare, baseCommit] = await Promise.all([
@@ -97,7 +78,7 @@ async function compute(repo: string): Promise<Unreleased> {
     if (pr === null) directCommits += 1;
     else if (pr !== "skip") numbers.add(pr);
   }
-  const prs = (await prDetails(repo, [...numbers]))
+  const prs = (await reads.prDetails(repo, [...numbers]))
     .map((pr) => ({
       number: pr.number,
       title: pr.title,
@@ -119,7 +100,7 @@ async function compute(repo: string): Promise<Unreleased> {
   };
 }
 
-export function createUnreleased(bb: BbPluginApi) {
+export function createUnreleased(bb: BbPluginApi, reads: Reads) {
   const cache = new Map<string, Unreleased>();
   return async function unreleased(projectId: string, refresh: boolean): Promise<Unreleased> {
     const cached = cache.get(projectId);
@@ -131,7 +112,7 @@ export function createUnreleased(bb: BbPluginApi) {
       result = { repo: null, head: null, base: null, baseKind: null, releasedAt: null, compareUrl: null, prs: [], directCommits: 0, error: "Pick a project with a GitHub repo to see what's unreleased.", checkedAt: Date.now() };
     } else {
       try {
-        result = await compute(repo);
+        result = await compute(reads, repo);
       } catch (error) {
         // Keep showing the last good answer when GitHub hiccups.
         if (cached) return cached;

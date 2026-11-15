@@ -8,6 +8,7 @@ import { existsSync } from "node:fs";
 import { readdir, rm, stat } from "node:fs/promises";
 import { basename, dirname, join, sep } from "node:path";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
+import type { Reads } from "./github";
 import { z } from "zod";
 
 export const leftoverSchema = z.object({
@@ -34,7 +35,6 @@ function run(bin: string, args: string[], cwd?: string): Promise<string> {
   });
 }
 const gitBin = () => ["/opt/homebrew/bin/git", "/usr/bin/git"].find(existsSync) ?? "git";
-const ghBin = () => ["/opt/homebrew/bin/gh", "/usr/local/bin/gh"].find(existsSync) ?? "gh";
 
 async function isFile(path: string): Promise<boolean> {
   return stat(path).then((info) => info.isFile(), () => false);
@@ -45,7 +45,7 @@ async function subdirs(path: string): Promise<string[]> {
   return entries.filter((entry) => entry.isDirectory() && !entry.name.startsWith(".")).map((entry) => join(path, entry.name));
 }
 
-export function createLeftovers(bb: BbPluginApi) {
+export function createLeftovers(bb: BbPluginApi, reads: Reads) {
   // This bb's data dir, not ~/.bb: another instance's live worktrees are not leftovers.
   const BB_HOME = bb.server.experimental_dataDir;
   /** bb's old worktree root, from before worktrees moved into the plugin's host data. */
@@ -90,11 +90,10 @@ export function createLeftovers(bb: BbPluginApi) {
     let pr: string | null = null;
     let prState: Leftover["prState"] = "none";
     if (remote && branch !== "HEAD" && branch !== "?") {
-      const found = await run(ghBin(), ["pr", "list", "-R", remote, "--head", branch, "--state", "all", "--json", "number,state", "-q", ".[0]"]).catch(() => "");
+      const found = await reads.prForBranch(remote, branch).catch(() => null);
       if (found) {
-        const parsed = JSON.parse(found) as { number: number; state: string };
-        pr = `${remote.split("/")[1]}#${parsed.number}`;
-        prState = parsed.state.toLowerCase() as Leftover["prState"];
+        pr = `${remote.split("/")[1]}#${found.number}`;
+        prState = found.state.toLowerCase() as Leftover["prState"];
       }
     }
     const info = await stat(path);
