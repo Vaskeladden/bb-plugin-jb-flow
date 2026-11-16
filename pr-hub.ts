@@ -17,6 +17,7 @@
 // comes only from this cycle's reads (hub-model.ts `checksVerdict`), so
 // nothing is reported from a read that was not made.
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
+import { orStop, pause } from "./service-stop.ts";
 import { QuotaPausedError, RateLimitedError, type GitHub, type QuotaState, type Reads } from "./github.ts";
 import {
   attentionOf,
@@ -288,17 +289,13 @@ export function createHub(bb: BbPluginApi, github: GitHub, reads: Reads, interes
   bb.background.service("github-hub", {
     async start(stop) {
       signal = stop;
+      // A cycle can outlast bb's five seconds for a service to stop (it reads
+      // GitHub and then runs every listener), and a reload then left the
+      // plugin degraded. The service returns at the stop instead; the cycle
+      // in flight sees `stopped()` and drops its view.
       while (!stop.aborted) {
-        await tick().catch((error) => bb.log.warn(`github hub: ${String(error)}`));
-        await new Promise<void>((resolve) => {
-          const done = () => {
-            clearTimeout(timer);
-            stop.removeEventListener("abort", done);
-            resolve();
-          };
-          const timer = setTimeout(done, TICK_MS);
-          stop.addEventListener("abort", done, { once: true });
-        });
+        await orStop(stop, tick().catch((error) => bb.log.warn(`github hub: ${String(error)}`)));
+        await pause(stop, TICK_MS);
       }
     },
   });

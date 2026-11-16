@@ -6,6 +6,7 @@
 import { everyThread } from "./all-threads.ts";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { lastReply, turnReply } from "./turn-reply.ts";
+import { orStop, stopOf } from "./service-stop.ts";
 import { laneSections } from "./lanes.ts";
 import { parseStatusReport, reportsNothingPending } from "./thread-status.ts";
 import { nextMove } from "./decisions.ts";
@@ -286,7 +287,8 @@ export function createAwaiting(bb: BbPluginApi, changed: () => void) {
   bb.background.service("awaiting-backfill", {
     async start(signal) {
       // Bump when the rules change, so open threads are re-classified once.
-      if ((await kv.get<number>("awaitingVersion")) !== AWAITING_VERSION) {
+      const backfill = async () => {
+        if ((await kv.get<number>("awaitingVersion")) === AWAITING_VERSION) return;
         const threads = await everyThread((page) => bb.sdk.threads.list(page));
         for (const thread of threads) {
           if (signal.aborted) return;
@@ -295,8 +297,9 @@ export function createAwaiting(bb: BbPluginApi, changed: () => void) {
           if (output) await classify(thread.id, output);
         }
         if (!signal.aborted) await kv.set("awaitingVersion", AWAITING_VERSION);
-      }
-      await new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }));
+      };
+      await orStop(signal, backfill());
+      await stopOf(signal);
     },
   });
 

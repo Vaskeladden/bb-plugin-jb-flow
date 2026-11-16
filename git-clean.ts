@@ -3,6 +3,7 @@
 // bb's environment status answers both questions, and it knows squash merges
 // ("committed unmerged" is false once the work landed on the default branch).
 import { everyThread } from "./all-threads.ts";
+import { orStop, pause } from "./service-stop.ts";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
@@ -98,16 +99,16 @@ export function createGitClean(bb: BbPluginApi, changed: () => void, reads: Read
 
   bb.background.service("git-clean-sweep", {
     async start(signal) {
-      while (!signal.aborted) {
+      const sweep = async () => {
         const threads = await everyThread((page) => bb.sdk.threads.list(page)).catch(() => []);
         for (const thread of threads) {
           if (signal.aborted) return;
           await check(thread as never, signal).catch(() => {});
         }
-        await new Promise<void>((resolve) => {
-          const timer = setTimeout(resolve, SWEEP_MS);
-          signal.addEventListener("abort", () => { clearTimeout(timer); resolve(); }, { once: true });
-        });
+      };
+      while (!signal.aborted) {
+        await orStop(signal, sweep());
+        await pause(signal, SWEEP_MS);
       }
     },
   });

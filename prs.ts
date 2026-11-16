@@ -11,6 +11,7 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import type { LightItem } from "./hub-model.ts";
 import type { Hub, HubView } from "./pr-hub.ts";
+import { orStop, stopOf } from "./service-stop.ts";
 
 export const prAttention = z.enum([
   "merged",
@@ -337,20 +338,23 @@ export function createPrTracker(bb: BbPluginApi, changed: () => void, hub: Hub) 
   // Backfill active threads once per load, without blocking startup.
   bb.background.service("pr-backfill", {
     async start(signal) {
-      if ((await kv.get<number>("threadPrsVersion")) !== 2) {
-        await exclusive(() => setThreads({}));
-        await kv.set("threadPrsVersion", 2);
-      }
-      const threads = await everyThread((page) => bb.sdk.threads.list(page));
-      for (const thread of threads) {
-        if (signal.aborted) return;
-        if (thread.archivedAt !== null || thread.parentThreadId !== null) continue;
-        await scan(thread.id, signal).catch((error) => {
-          if (!signal.aborted) bb.log.warn(`pr scan ${thread.id}: ${String(error)}`);
-        });
-      }
-      if (!signal.aborted) await refresh();
-      await new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }));
+      const backfill = async () => {
+        if ((await kv.get<number>("threadPrsVersion")) !== 2) {
+          await exclusive(() => setThreads({}));
+          await kv.set("threadPrsVersion", 2);
+        }
+        const threads = await everyThread((page) => bb.sdk.threads.list(page));
+        for (const thread of threads) {
+          if (signal.aborted) return;
+          if (thread.archivedAt !== null || thread.parentThreadId !== null) continue;
+          await scan(thread.id, signal).catch((error) => {
+            if (!signal.aborted) bb.log.warn(`pr scan ${thread.id}: ${String(error)}`);
+          });
+        }
+        if (!signal.aborted) await refresh();
+      };
+      await orStop(signal, backfill());
+      await stopOf(signal);
     },
   });
 

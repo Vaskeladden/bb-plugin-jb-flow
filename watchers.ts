@@ -24,6 +24,7 @@ import { parseLimitHit } from "./limits.ts";
 import type { Hub, HubView } from "./pr-hub.ts";
 import { RELEASE_WAIT } from "./release-wait.ts";
 import { parseRunRef, runOutcome } from "./runs.ts";
+import { orStop, stopOf } from "./service-stop.ts";
 
 export const releaseWatchSchema = z.object({
   /** owner/name; defaults to the project's GitHub remote. */
@@ -561,18 +562,19 @@ export function createWatchers(
   // the version when RELEASE_WAIT or the config changes.
   bb.background.service("release-backfill", {
     async start(signal) {
-      // Waiters used to be keyed by thread id alone; move them to thread@project.
-      const stored = await get<Record<string, ReleaseWaiter>>("releaseWaiters", {});
-      const legacy = Object.keys(stored).filter((key) => !key.includes("@"));
-      if (legacy.length > 0) {
-        for (const key of legacy) {
-          const waiter = stored[key]!;
-          stored[waiterKey(waiter.threadId, waiter.projectName)] ??= waiter;
-          delete stored[key];
+      const backfill = async () => {
+        // Waiters used to be keyed by thread id alone; move them to thread@project.
+        const stored = await get<Record<string, ReleaseWaiter>>("releaseWaiters", {});
+        const legacy = Object.keys(stored).filter((key) => !key.includes("@"));
+        if (legacy.length > 0) {
+          for (const key of legacy) {
+            const waiter = stored[key]!;
+            stored[waiterKey(waiter.threadId, waiter.projectName)] ??= waiter;
+            delete stored[key];
+          }
+          await kv.set("releaseWaiters", stored);
         }
-        await kv.set("releaseWaiters", stored);
-      }
-      if ((await get<number>("releaseBackfill", 0)) !== RELEASE_BACKFILL_VERSION) {
+        if ((await get<number>("releaseBackfill", 0)) === RELEASE_BACKFILL_VERSION) return;
         const threads = await everyThread((page) => bb.sdk.threads.list(page));
         for (const thread of threads) {
           if (signal.aborted) return;
@@ -582,8 +584,9 @@ export function createWatchers(
           if (RELEASE_WAIT.test(tail)) await registerReleaseWaiter(thread).catch((error) => bb.log.warn(`release backfill ${thread.id}: ${String(error)}`));
         }
         if (!signal.aborted) await kv.set("releaseBackfill", RELEASE_BACKFILL_VERSION);
-      }
-      await new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }));
+      };
+      await orStop(signal, backfill());
+      await stopOf(signal);
     },
   });
 

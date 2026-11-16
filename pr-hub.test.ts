@@ -398,3 +398,22 @@ test("a reload aborts the cycle: nothing more is read and no listener is told", 
   assert.deepEqual(calls, []);
   assert.equal(told, 0);
 });
+
+test("a reload stops the service at once, also while a listener is still at work", async () => {
+  const { hub, services } = setup({ light: ALL_DONE, detail: { pairs: ALL_DONE, suites: [{ id: 1, build: [passed()], gate: [passed()] }] } });
+  let entered!: () => void;
+  const inListener = new Promise<void>((resolve) => (entered = resolve));
+  let release!: () => void;
+  hub.onCycle(async () => {
+    entered();
+    await new Promise<void>((resolve) => (release = resolve));
+  });
+  const stop = new AbortController();
+  const service = services[0]!(stop.signal) as Promise<void>;
+  await inListener;
+  stop.abort();
+  // bb gives a service five seconds to stop; before, it waited for the slow listener and the reload left the plugin degraded.
+  const outcome = await Promise.race([service.then(() => "stopped"), new Promise((resolve) => setTimeout(() => resolve("still running"), 200))]);
+  release();
+  assert.equal(outcome, "stopped");
+});
