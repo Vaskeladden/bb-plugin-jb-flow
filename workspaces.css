@@ -483,6 +483,42 @@
   .jf-workspace-more-icon {
     display: none;
   }
+  /* Desktop: three tight columns of names, so every page stays in view
+     without the menu taking a third of the sidebar. A column is as wide as
+     its longest name, and only when the three do not fit is the longest cut
+     (it shows in full on hover, the button's title). Two columns in a narrow
+     sidebar, four in a wide one. */
+  .jf-workspaces {
+    container-type: inline-size;
+    padding-inline: 6px;
+  }
+  .jf-workspace-tools {
+    grid-template-columns: repeat(3, minmax(0, auto));
+    gap: 0 2px;
+  }
+  @container (max-width: 301px) {
+    .jf-workspace-tools {
+      grid-template-columns: repeat(2, minmax(0, auto));
+    }
+  }
+  @container (min-width: 400px) {
+    .jf-workspace-tools {
+      grid-template-columns: repeat(4, minmax(0, auto));
+    }
+  }
+  .jf-workspace-tool {
+    gap: 4px;
+    padding: 3px 4px;
+    font-size: 12px;
+    line-height: 18px;
+  }
+  .jf-workspace-tool svg {
+    width: 13px;
+    height: 13px;
+  }
+  .jf-workspace-footer button {
+    padding-block: 2px;
+  }
 }
 
 /* Reserve a separate row for workspace navigation. Framed desktop layouts
