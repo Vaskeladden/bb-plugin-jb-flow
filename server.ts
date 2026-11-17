@@ -1,5 +1,6 @@
 import { everyThread } from "./all-threads";
 import { sectionOnWake, sectionSnoozedFrom } from "./snooze-section";
+import { automationCreator, sectionForNewThread, type AutomationOrigin } from "./spawn-section";
 import { createWorkspaceStorage } from "./workspace-storage";
 import { lastReply } from "./turn-reply";
 import { workspaceSchema, workspaceStateSchema } from "./workspaces";
@@ -890,6 +891,79 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
     await bb.storage.kv.set("moveLog", [...log, { at: Date.now(), threadId, from, to: sectionId, via }].slice(-300));
     bb.log.info(`moved ${threadId} from ${from ?? "none"} to ${sectionId ?? "none"} via ${via}`);
   }
+
+  // --- section of a new thread ----------------------------------------------
+
+  // bb creates a thread without a section unless its caller names one, so a
+  // thread an agent spawns, a fork and an automation's run would all land in
+  // Unassigned. Each goes to the section of the thread it came from
+  // (spawn-section.ts). A thread started by hand comes from nowhere and stays
+  // in Unassigned for its owner to place.
+  const automationOrigins = z.array(z.object({ id: z.string(), createdByThreadId: z.string().nullable(), lastRunThreadId: z.string().nullable() }));
+  /** A project's automations, as the automations plugin lists them. */
+  function automationsOf(projectId: string): Promise<AutomationOrigin[]> {
+    return bb.sdk.plugins.callRpc({ pluginId: "automations", method: "automations_list", input: { projectId }, outputSchema: automationOrigins });
+  }
+
+  // One placement at a time: threads spawned together would otherwise write
+  // the move log over each other.
+  let placeLock: Promise<unknown> = Promise.resolve();
+  /** Move the picked threads that have no section to the section they belong in; returns how many moved. */
+  function placeThreads(pick: (thread: Thread) => boolean): Promise<number> {
+    const run = placeLock.then(async () => {
+      const all = await everyThread((page) => bb.sdk.threads.list(page));
+      const waiting = all
+        .filter((thread) => thread.sectionId === null && thread.archivedAt === null && thread.deletedAt === null && thread.visibility === "visible" && pick(thread))
+        .sort((a, b) => a.createdAt - b.createdAt);
+      if (waiting.length === 0) return 0;
+      const index = new Map(all.map((thread) => [thread.id, thread]));
+      const [snoozedSection, snoozes, sections] = await Promise.all([findSnoozedSection(), getSnoozes(), bb.sdk.threadSections.list()]);
+      const automations = new Map<string, Promise<AutomationOrigin[]>>();
+      let placed = 0;
+      for (const thread of waiting) {
+        let origin: string | null = null;
+        if (thread.originPluginId === "automations") {
+          if (!automations.has(thread.projectId)) automations.set(thread.projectId, automationsOf(thread.projectId));
+          origin = automationCreator(thread.id, thread.titleFallback, await automations.get(thread.projectId)!);
+        }
+        const sectionId = sectionForNewThread(thread, origin, index, snoozedSection, (threadId) => snoozes[threadId]?.fromSectionId ?? null);
+        if (sectionId === null || !sections.some((section) => section.id === sectionId)) continue;
+        await moveThread(thread.id, sectionId, "spawn");
+        index.set(thread.id, { ...thread, sectionId });
+        placed += 1;
+      }
+      if (placed > 0) changed();
+      return placed;
+    });
+    placeLock = run.catch(() => undefined);
+    return run;
+  }
+
+  const placeRetries = new Set<ReturnType<typeof setTimeout>>();
+  bb.onDispose(() => placeRetries.forEach(clearTimeout));
+  bb.events.on("thread.created", ({ thread }) => {
+    const place = () => placeThreads((candidate) => candidate.id === thread.id);
+    const failed = (error: unknown) => bb.log.warn(`could not place new thread ${thread.id} in a section: ${String(error)}`);
+    place().then((placed) => {
+      // An automation records its run a moment after it creates the thread.
+      if (placed > 0 || thread.originPluginId !== "automations") return;
+      const retry = setTimeout(() => {
+        placeRetries.delete(retry);
+        place().catch(failed);
+      }, 20_000);
+      placeRetries.add(retry);
+    }, failed);
+  });
+  // Threads created while the plugin was not running (a reload, an update, or
+  // before this rule existed) are placed once, at the next start. A thread is
+  // only ever looked at as new once, so one its owner moves back to Unassigned stays there.
+  void (async () => {
+    const through = (await bb.storage.kv.get<number>("placedThrough")) ?? 0;
+    const startedAt = Date.now();
+    const placed = await placeThreads((thread) => thread.createdAt > through);
+    await bb.storage.kv.set("placedThrough", startedAt);
+    if (placed > 0) bb.log.info(`placed ${placed} thread(s) created since the last start in their sections`);
+  })().catch((error) => bb.log.warn(`could not place the threads created since the last start: ${String(error)}`));
 
   /** The facts the sidebar reads a thread's state from. */
   async function stateFacts(): Promise<ThreadStateFacts> {
