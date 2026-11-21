@@ -1608,9 +1608,9 @@ function TriageThreadList({
       return open.length > 0 && open.every((pr) => pr.attention === "review_requested");
     };
     const waitingLane = lanes.find((lane) => lane.id === "waiting");
-    // Fork (stable-created-order): threads stay in their own section like in
-    // Conductor. Needs me, Stalled and Done are the counters' filters, not
-    // groups that pull threads out of their sections.
+    // Fork (stable-created-order): threads stay in their own section. Needs
+    // me, Stalled and Done are the counters' filters, not groups that pull
+    // threads out of their sections.
     const pinned = awake.filter((thread) => thread.isPinned);
     const rest = awake.filter((thread) => !thread.isPinned);
 
