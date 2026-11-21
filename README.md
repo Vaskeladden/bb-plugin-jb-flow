@@ -239,6 +239,11 @@ and marks it checked or only claimed. The report is mostly visuals: one bar for 
 is done and what is left, the remaining work in order, then gaps and surprises, with a few plain sentences each.
 It ends with the same Goal, Done, Next and Progress fields, so the monitor stays current. It takes a while and
 many tokens; it changes nothing and messages no child before you reply go.
+With the genui plugin's status board, the report goes in the thread's side panel instead of the reply: the
+*Status board* tab opens by itself and keeps every run as a version. **Ultrastatus** updates the board that is
+there (same rows and order, every row checked again, a line on what changed); **New board** builds one from
+scratch and leaves the old one in the history. The reply then holds only the bottom line, the fields the
+monitor reads and the next steps. Without that plugin the report arrives in the reply as before.
 To skip the button, turn on **Status report at hand-back**: agents then end every reply that hands the
 thread back to you (done, blocked, or waiting for your input) with that report, and the monitor keeps itself
 current. Threads pick it up when their session next starts.

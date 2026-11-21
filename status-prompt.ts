@@ -306,10 +306,51 @@ export function statusRequest(setting: unknown, parentId: string, children: read
   return section ? `${statusPrompt(setting)}\n\n${section}` : statusPrompt(setting);
 }
 
-/** What the Ultrastatus button sends: the thorough report prompt, plus the child threads when the thread has any. */
-export function ultrastatusRequest(setting: unknown, parentId: string, children: readonly ChildThread[], now: number = Date.now()): string {
-  const section = ultrastatusChildrenSection(parentId, children, now);
-  return section ? `${ultrastatusPrompt(setting)}\n\n${section}` : ultrastatusPrompt(setting);
+/** Where an Ultrastatus report goes on the thread's status board: a new version of the board that is there, or a new board. */
+export type BoardMode = "update" | "new";
+
+/**
+ * What an Ultrastatus request adds when the report goes on the thread's status
+ * board (the genui plugin's side-panel tab, filled with its show_board tool)
+ * instead of in the reply: how to publish it, what an update keeps from the
+ * board that is there, and what little the reply still holds. An agent without
+ * the board reports in its reply as before.
+ */
+export function ultrastatusBoardSection(mode: BoardMode): string {
+  return [
+    "---",
+    "",
+    "Put the report on this thread's status board, not in your reply. The board is a tab in my side panel that opens by itself and stays there; a reply scrolls away.",
+    "",
+    `- Everything step 3 asks for (bottom line and bar, matrix, what is left, how it fits together, gaps) is one board. Publish it with the \`show_board\` tool: the report as \`content\` (markdown with its \`\`\`ui blocks) and \`mode: "${mode}"\`. Without that tool, write the report to \`$BB_THREAD_STORAGE/board.md\` and run \`bb genui show-board '$BB_THREAD_STORAGE/board.md'${mode === "new" ? " --new" : ""}\`. If this bb has neither, put the report in your reply as step 3 says and skip the rest of this section.`,
+    ...(mode === "update"
+      ? [
+          "- This run updates the board that is there. Read it first with `bb genui board`. Keep its title, its rows, their names and their order, so I can compare with last time. Add rows for new work; never drop a row silently, mark it dropped.",
+          "- A mark copied from the old board is a claim, not a check: every row is checked again now, as step 2 says.",
+          "- Open the board with one short line on what changed since the last version (\"Since last time: …\"), or say that nothing changed. If there is no board yet, start one, with a title of a few words naming the job.",
+        ]
+      : [
+          "- This run starts a new board: build it from scratch, with a title of a few words naming the job. Do not copy the old board; it stays in the history.",
+        ]),
+    "- A block that fails its check stores nothing: fix what the answer names and publish again.",
+    "- In your reply write only the bottom line in one or two sentences and that the full report is on the status board, then the closing fields, `### Progress` and `### Next steps` exactly as described above, so I can answer from the chat. Do not repeat the matrix or the other visuals in the reply.",
+  ].join("\n");
+}
+
+/**
+ * What the Ultrastatus buttons send: the thorough report prompt, where the
+ * report goes when it goes on the status board, plus the child threads when
+ * the thread has any.
+ */
+export function ultrastatusRequest(
+  setting: unknown,
+  parentId: string,
+  children: readonly ChildThread[],
+  now: number = Date.now(),
+  board: BoardMode | null = null,
+): string {
+  const sections = [board === null ? "" : ultrastatusBoardSection(board), ultrastatusChildrenSection(parentId, children, now)];
+  return [ultrastatusPrompt(setting), ...sections.filter((section) => section !== "")].join("\n\n");
 }
 
 /**

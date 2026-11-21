@@ -518,6 +518,7 @@ export function ActivityCard({
   hasLiveData = true,
   onRequestStatus,
   onRequestUltrastatus,
+  onRequestUltrastatusNewBoard,
   onRequestDonkey,
   onRequestRevise,
   parked,
@@ -542,8 +543,10 @@ export function ActivityCard({
   monitorStale?: boolean;
   hasLiveData?: boolean;
   onRequestStatus?: () => Promise<void>;
-  /** Asks the agent for the thorough, checked report on the whole job, child threads included, shown in pictures. */
+  /** Asks the agent for the thorough, checked report on the whole job, child threads included, as a new version of the thread's status board. */
   onRequestUltrastatus?: () => Promise<void>;
+  /** The same report on a new status board; the board that is there stays in its history. */
+  onRequestUltrastatusNewBoard?: () => Promise<void>;
   /** Asks the agent to explain the problem in plain words, with decisions as buttons. */
   onRequestDonkey?: () => Promise<void>;
   /** Asks the agent to have Fable 5.2 or Codex review its plan, then continue with the revised plan. */
@@ -632,6 +635,7 @@ export function ActivityCard({
   };
   const requestStatus = () => send(onRequestStatus, "Could not request status. Try again.");
   const requestUltrastatus = () => send(onRequestUltrastatus, "Could not request the Ultrastatus. Try again.");
+  const requestUltrastatusNewBoard = () => send(onRequestUltrastatusNewBoard, "Could not request the Ultrastatus. Try again.");
   const requestDonkey = () => send(onRequestDonkey, "Could not ask for the explanation. Try again.");
   const requestRevise = () => send(onRequestRevise, "Could not ask for the revision. Try again.");
   const shortcutTargets = useRef({ status: requestStatus, donkey: requestDonkey, canRequest, hasDonkey: !!onRequestDonkey });
@@ -731,9 +735,20 @@ export function ActivityCard({
             className="jf-monitor-update jf-monitor-update-quiet"
             disabled={requesting}
             onClick={requestUltrastatus}
-            title="Ask the agent for a thorough status of the whole job, child threads included: every claim checked, shown as a matrix of what is done and what is left. Takes a while and many tokens"
+            title="Ask the agent for a thorough status of the whole job, child threads included: every claim checked, shown as a matrix of what is done and what is left. It updates the status board in the side panel and keeps the earlier versions. Takes a while and many tokens"
           >
             Ultrastatus
+          </button>
+        )}
+        {canRequest && onRequestUltrastatusNewBoard && (
+          <button
+            type="button"
+            className="jf-monitor-update jf-monitor-update-quiet"
+            disabled={requesting}
+            onClick={requestUltrastatusNewBoard}
+            title="Ultrastatus on a new status board, built from scratch. The board that is there stays in the history. Takes a while and many tokens"
+          >
+            New board
           </button>
         )}
         {canRequest && onRequestDonkey && (
@@ -1244,7 +1259,10 @@ export function LiveActivityBanner({
         await rpc.call("thread_status_request", { threadId, kind: "status" });
       }}
       onRequestUltrastatus={async () => {
-        await rpc.call("thread_status_request", { threadId, kind: "ultra" });
+        await rpc.call("thread_status_request", { threadId, kind: "ultra", board: "update" });
+      }}
+      onRequestUltrastatusNewBoard={async () => {
+        await rpc.call("thread_status_request", { threadId, kind: "ultra", board: "new" });
       }}
       onRequestDonkey={async () => {
         await rpc.call("thread_reply", { threadId, text: donkeyPrompt(values?.donkeyPrompt) });

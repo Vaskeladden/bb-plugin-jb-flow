@@ -427,6 +427,31 @@ it("has Ultrastatus read every child and check the finished ones", () => {
   expect(ultrastatusRequest("Tell me everything.", "thr_parent", [child({})]).startsWith("Tell me everything.\n\n---")).toBe(true);
 });
 
+it("sends an Ultrastatus report to the status board, as an update or a new board", () => {
+  const update = ultrastatusRequest("", "thr_parent", [], 0, "update");
+  // The opening the other tools match on is untouched; the board section follows the prompt.
+  expect(update.startsWith(`${DEFAULT_ULTRASTATUS_PROMPT}\n\n---\n\nPut the report on this thread's status board`)).toBe(true);
+  expect(update).toContain('`mode: "update"`');
+  expect(update).toContain("`bb genui show-board '$BB_THREAD_STORAGE/board.md'`");
+  expect(update).toContain("Read it first with `bb genui board`");
+  expect(update).toContain("Since last time");
+  // Without the board the report still arrives, in the reply.
+  expect(update).toContain("put the report in your reply as step 3 says");
+  // The fields the monitor reads and the decisions stay in the chat.
+  expect(update).toContain("then the closing fields, `### Progress` and `### Next steps`");
+
+  const fresh = ultrastatusRequest("", "thr_parent", [], 0, "new");
+  expect(fresh).toContain('`mode: "new"`');
+  expect(fresh).toContain("`bb genui show-board '$BB_THREAD_STORAGE/board.md' --new`");
+  expect(fresh).toContain("build it from scratch");
+  expect(fresh).not.toContain("Read it first with `bb genui board`");
+
+  // With children: the prompt, where the report goes, then the children.
+  const withChild = ultrastatusRequest("Tell me everything.", "thr_parent", [child({})], 0, "update");
+  expect(withChild.startsWith("Tell me everything.\n\n---\n\nPut the report on this thread's status board")).toBe(true);
+  expect(withChild.indexOf("This thread has child threads")).toBeGreaterThan(withChild.indexOf("status board"));
+});
+
 it("lists more children for Ultrastatus than for Status", () => {
   const many = Array.from({ length: ULTRA_CHILD_ROWS_MAX + 3 }, (_, index) => child({ id: `thr_done${index}`, state: "done" }));
   const rows = (text: string) => text.split("\n").filter((line) => line.startsWith("- thr_"));
