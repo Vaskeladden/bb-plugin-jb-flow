@@ -313,7 +313,8 @@ export type BoardMode = "update" | "new";
  * What an Ultrastatus request adds when the report goes on the thread's status
  * board (the genui plugin's side-panel tab, filled with its show_board tool)
  * instead of in the reply: how to publish it, what an update keeps from the
- * board that is there, and what little the reply still holds. An agent without
+ * board that is there, that its next steps and decisions are controls the user
+ * can act on from the side panel, and what little the reply still holds. An agent without
  * the board reports in its reply as before.
  */
 export function ultrastatusBoardSection(mode: BoardMode): string {
@@ -332,6 +333,7 @@ export function ultrastatusBoardSection(mode: BoardMode): string {
       : [
           "- This run starts a new board: build it from scratch, with a title of a few words naming the job. Do not copy the old board; it stays in the history.",
         ]),
+    "- The board is also where I go on with the work, so everything I can act on is a control I can press, never only a sentence. Right after the bottom line, put one card named «Next» with: the steps you can do yourself as Buttons (one per step, and one for all of them), or as a Plan when they need my approval; each decision that is mine as Buttons, a Decision or a Form; and for a pull request that is ready, Buttons labelled with the trigger words `shipit` and `polish`, with what each does as text beside them. A Button without an action sends its label as my answer, so the label must stand alone as an instruction to you (\"Do step 1: fix the failing test\", \"Do all three steps\", \"shipit\"); `Send(text)` as its action sends a longer ready-made message. What I pick lands in this thread's message field, and I send it from the board. Offer only real next steps; when the goal is met, the card says «Nothing pending.»",
     "- A block that fails its check stores nothing: fix what the answer names and publish again.",
     "- In your reply write only the bottom line in one or two sentences and that the full report is on the status board, then the closing fields, `### Progress` and `### Next steps` exactly as described above, so I can answer from the chat. Do not repeat the matrix or the other visuals in the reply.",
   ].join("\n");

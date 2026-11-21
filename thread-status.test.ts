@@ -434,6 +434,9 @@ it("sends an Ultrastatus report to the status board, as an update or a new board
   expect(update).toContain('`mode: "update"`');
   expect(update).toContain("`bb genui show-board '$BB_THREAD_STORAGE/board.md'`");
   expect(update).toContain("Read it first with `bb genui board`");
+  // The board is where the user goes on: its next steps and decisions are controls, in both modes.
+  expect(update).toContain("put one card named «Next»");
+  expect(update).toContain("I send it from the board");
   expect(update).toContain("Since last time");
   // Without the board the report still arrives, in the reply.
   expect(update).toContain("put the report in your reply as step 3 says");
@@ -445,6 +448,7 @@ it("sends an Ultrastatus report to the status board, as an update or a new board
   expect(fresh).toContain("`bb genui show-board '$BB_THREAD_STORAGE/board.md' --new`");
   expect(fresh).toContain("build it from scratch");
   expect(fresh).not.toContain("Read it first with `bb genui board`");
+  expect(fresh).toContain("put one card named «Next»");
 
   // With children: the prompt, where the report goes, then the children.
   const withChild = ultrastatusRequest("Tell me everything.", "thr_parent", [child({})], 0, "update");
