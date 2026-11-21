@@ -525,12 +525,9 @@ it("requests the actual Status prompt only on click and leaves the composer draf
   expect(slot.getByRole("button", { name: "Ultrastatus" }).getAttribute("title")).toContain("child threads included");
   fireEvent.click(slot.getByRole("button", { name: "Ultrastatus" }));
   await waitFor(() => expect(status).toHaveBeenCalledTimes(2));
-  // It updates the thread's status board; New board starts another.
+  // It updates the thread's status board. A new board is started from the board itself, not from this card.
   expect(status.mock.calls[1]).toEqual([{ threadId: "t1", kind: "ultra", board: "update" }]);
-  expect(slot.getByRole("button", { name: "New board" }).getAttribute("title")).toContain("stays in the history");
-  fireEvent.click(slot.getByRole("button", { name: "New board" }));
-  await waitFor(() => expect(status).toHaveBeenCalledTimes(3));
-  expect(status.mock.calls[2]).toEqual([{ threadId: "t1", kind: "ultra", board: "new" }]);
+  expect(slot.queryByRole("button", { name: "New board" })).toBeNull();
   fireEvent.click(slot.getByRole("button", { name: "Donkey" }));
   await waitFor(() => expect(request).toHaveBeenCalledTimes(1));
   expect(request.mock.calls[0]).toEqual([
