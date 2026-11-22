@@ -432,7 +432,9 @@ it("sends an Ultrastatus report to the status board, as an update or a new board
   // The opening the other tools match on is untouched; the board section follows the prompt.
   expect(update.startsWith(`${DEFAULT_ULTRASTATUS_PROMPT}\n\n---\n\nPut the report on this thread's status board`)).toBe(true);
   expect(update).toContain('`mode: "update"`');
-  expect(update).toContain("`bb genui show-board '$BB_THREAD_STORAGE/board.md'`");
+  // Only this run counts as an Ultrastatus on the board; the agent's own updates in between don't.
+  expect(update).toContain('`kind: "ultrastatus"`');
+  expect(update).toContain("`bb genui show-board '$BB_THREAD_STORAGE/board.md' --ultrastatus`");
   expect(update).toContain("Read it first with `bb genui board`");
   // The board is where the user goes on: its next steps and decisions are controls, in both modes.
   expect(update).toContain("put one card named «Next»");
@@ -445,7 +447,7 @@ it("sends an Ultrastatus report to the status board, as an update or a new board
 
   const fresh = ultrastatusRequest("", "thr_parent", [], 0, "new");
   expect(fresh).toContain('`mode: "new"`');
-  expect(fresh).toContain("`bb genui show-board '$BB_THREAD_STORAGE/board.md' --new`");
+  expect(fresh).toContain("`bb genui show-board '$BB_THREAD_STORAGE/board.md' --new --ultrastatus`");
   expect(fresh).toContain("build it from scratch");
   expect(fresh).not.toContain("Read it first with `bb genui board`");
   expect(fresh).toContain("put one card named «Next»");
