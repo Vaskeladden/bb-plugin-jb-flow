@@ -323,11 +323,11 @@ export function ultrastatusBoardSection(mode: BoardMode): string {
     "",
     "Put the report on this thread's status board, not in your reply. The board is a tab in my side panel that opens by itself and stays there; a reply scrolls away.",
     "",
-    `- Everything step 3 asks for (bottom line and bar, matrix, what is left, how it fits together, gaps) is one board. Publish it with the \`show_board\` tool: the report as \`content\` (markdown with its \`\`\`ui blocks) and \`mode: "${mode}"\`. Without that tool, write the report to \`$BB_THREAD_STORAGE/board.md\` and run \`bb genui show-board '$BB_THREAD_STORAGE/board.md'${mode === "new" ? " --new" : ""}\`. If this bb has neither, put the report in your reply as step 3 says and skip the rest of this section.`,
+    `- Everything step 3 asks for (bottom line and bar, matrix, what is left, how it fits together, gaps) is one board. Publish it with the \`show_board\` tool: the report as \`content\` (markdown with its \`\`\`ui blocks), \`mode: "${mode}"\` and \`kind: "ultrastatus"\`, since this run checks every row. Without that tool, write the report to \`$BB_THREAD_STORAGE/board.md\` and run \`bb genui show-board '$BB_THREAD_STORAGE/board.md'${mode === "new" ? " --new" : ""} --ultrastatus\`. If this bb has neither, put the report in your reply as step 3 says and skip the rest of this section.`,
     ...(mode === "update"
       ? [
           "- This run updates the board that is there. Read it first with `bb genui board`. Keep its title, its rows, their names and their order, so I can compare with last time. Add rows for new work; never drop a row silently, mark it dropped.",
-          "- A mark copied from the old board is a claim, not a check: every row is checked again now, as step 2 says.",
+          "- A mark copied from the old board is a claim, not a check: every row is checked again now, as step 2 says. Versions since the last Ultrastatus may be updates written from the work without any check.",
           "- Open the board with one short line on what changed since the last version (\"Since last time: …\"), or say that nothing changed. If there is no board yet, start one, with a title of a few words naming the job.",
         ]
       : [

@@ -244,6 +244,9 @@ With the genui plugin's status board, the report goes in the thread's side panel
 there (same rows and order, every row checked again, a line on what changed); **New board** builds one from
 scratch and leaves the old one in the history. The reply then holds only the bottom line, the fields the
 monitor reads and the next steps. Without that plugin the report arrives in the reply as before.
+Once a thread has a board, its agent keeps it current by itself: at the end of each turn that moved the work, and
+when you ask for a status, it publishes an update from what it knows, without checking every row again. Such an
+update never counts as an Ultrastatus: the tab says it was not checked again and when the last Ultrastatus was.
 To skip the button, turn on **Status report at hand-back**: agents then end every reply that hands the
 thread back to you (done, blocked, or waiting for your input) with that report, and the monitor keeps itself
 current. Threads pick it up when their session next starts.
