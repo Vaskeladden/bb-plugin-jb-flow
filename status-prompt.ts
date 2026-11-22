@@ -300,10 +300,38 @@ export function ultrastatusChildrenSection(parentId: string, children: readonly 
   ].join("\n");
 }
 
-/** What the Status button sends: the report prompt, plus the child threads when the thread has any. */
-export function statusRequest(setting: unknown, parentId: string, children: readonly ChildThread[], now: number = Date.now()): string {
-  const section = childrenSection(parentId, children, now);
-  return section ? `${statusPrompt(setting)}\n\n${section}` : statusPrompt(setting);
+/**
+ * What a status request adds when the thread has a status board (the genui
+ * plugin's side-panel tab): bring it up to date as well, as an update. It says
+ * so in the request itself, so an agent whose session started before the board
+ * plugin told it to keep the board current still does it.
+ */
+export function statusBoardSection(title: string): string {
+  return [
+    "---",
+    "",
+    `This thread has a status board in my side panel («${title}»). After the report, bring it up to date too:`,
+    "- Read it with `bb genui board`, change only what moved since its last version, and publish it with the `show_board` tool, `mode: \"update\"` and `kind: \"update\"`. Without that tool, write it to `$BB_THREAD_STORAGE/board.md` and run `bb genui show-board '$BB_THREAD_STORAGE/board.md'`.",
+    "- Lay it out as the status board layout says (the tool's instructions, or `bb genui show-board --help`): the five «In plain words» lines first, in donkey language.",
+    "- This is an update, not an Ultrastatus: write from what you know, don't check every row again, and never call it an Ultrastatus.",
+    "- If nothing on the board changed since its last version, leave it as it is.",
+  ].join("\n");
+}
+
+/**
+ * What the Status button sends: the report prompt, plus the child threads when
+ * the thread has any, plus the board update when it has a status board
+ * (`board` is its title; null without one).
+ */
+export function statusRequest(
+  setting: unknown,
+  parentId: string,
+  children: readonly ChildThread[],
+  now: number = Date.now(),
+  board: string | null = null,
+): string {
+  const sections = [childrenSection(parentId, children, now), board === null ? "" : statusBoardSection(board)];
+  return [statusPrompt(setting), ...sections.filter((section) => section !== "")].join("\n\n");
 }
 
 /** Where an Ultrastatus report goes on the thread's status board: a new version of the board that is there, or a new board. */

@@ -245,7 +245,7 @@ there (same rows and order, every row checked again, a line on what changed); **
 scratch and leaves the old one in the history. The reply then holds only the bottom line, the fields the
 monitor reads and the next steps. Without that plugin the report arrives in the reply as before.
 Once a thread has a board, its agent keeps it current by itself: at the end of each turn that moved the work, and
-when you ask for a status, it publishes an update from what it knows, without checking every row again. Such an
+when you ask for a status (Update status says so itself, so it works in a session that started before the board did), it publishes an update from what it knows, without checking every row again. Such an
 update never counts as an Ultrastatus: the tab says it was not checked again and when the last Ultrastatus was.
 Every board opens with five plain lines (what we are making, how far we are, what changed, what happens now,
 what it needs from you), then the bar and the next steps, then each visual under a plain question.

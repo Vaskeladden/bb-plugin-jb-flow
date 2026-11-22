@@ -308,6 +308,19 @@ it("asks a thread without children for the plain report", () => {
   expect(childrenSection("thr_parent", [])).toBe("");
 });
 
+it("asks to bring the status board up to date as an update when the thread has one", () => {
+  const text = statusRequest("", "thr_parent", [], 0, "Launch");
+  expect(text.startsWith(`${DEFAULT_STATUS_PROMPT}\n\n---\n\nThis thread has a status board in my side panel («Launch»)`)).toBe(true);
+  expect(text).toContain('`mode: \"update\"` and `kind: \"update\"`');
+  expect(text).toContain("the five «In plain words» lines first");
+  expect(text).toContain("never call it an Ultrastatus");
+  // Without a board the request is the plain report, as before.
+  expect(statusRequest("", "thr_parent", [], 0, null)).toBe(DEFAULT_STATUS_PROMPT);
+  // With children too: the children first, then the board.
+  const both = statusRequest("", "thr_parent", [child({})], 0, "Launch");
+  expect(both.indexOf("This thread has child threads")).toBeLessThan(both.indexOf("This thread has a status board"));
+});
+
 it("adds each child's state and last report when the thread has children", () => {
   const now = 10 * 60 * 60_000;
   const text = statusRequest(
