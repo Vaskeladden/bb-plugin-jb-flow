@@ -6,7 +6,7 @@ import { lastReply } from "./turn-reply";
 import { workspaceSchema, workspaceStateSchema } from "./workspaces";
 import { createThreadStatus, threadStatusSchema } from "./thread-status";
 import { countSince } from "./catch-up-model";
-import { handBackInstructions, statusRequest, THREAD_REPLY_MAX, ultrastatusRequest, type ChildThread } from "./status-prompt";
+import { handBackInstructions, revisePrompt, statusRequest, THREAD_REPLY_MAX, ultrastatusRequest, type ChildThread } from "./status-prompt";
 // jb-flow: snooze threads until a date, a daily stale-thread digest, and the
 // state behind the Triage thread list in app.tsx.
 //
@@ -259,6 +259,11 @@ export const rpcContract = defineRpcContract({
     input: z.object({ threadId: z.string(), text: z.string().min(1).max(THREAD_REPLY_MAX) }),
     output: z.object({ ok: z.boolean() }),
   },
+  thread_revise_request: {
+    // The Revise button: the Revise prompt, with the reviewer picked from the thread's agent.
+    input: z.object({ threadId: z.string() }),
+    output: z.object({ ok: z.boolean() }),
+  },
   thread_status_request: {
     // The Status and Ultrastatus buttons: the report prompt, plus the thread's child threads when it has any.
     // `board` (Ultrastatus only) puts the report on the thread's status board: a new version of it, or a new board.
@@ -401,7 +406,7 @@ export default async function plugin(bb: BbPluginApi) {
       type: "string",
       label: "Revise prompt",
       description:
-        "What the Revise button sends: ask Fable 5.2 (complex work) or Codex through /second-opinion (the rest) to review the plan, then continue with the revised plan. Leave empty for the built-in prompt.",
+        "What the Revise button sends: have a model of the other family review the plan (Codex for a Claude thread, Fable 5.2 for any other), then continue with the revised plan. Leave empty for the built-in prompt.",
       experimental_multiline: true,
       default: "",
     },
@@ -1202,6 +1207,12 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
       return nextMove((await lastReply(bb, threadId)) ?? "");
     },
     thread_reply: async ({ threadId, text }) => {
+      await bb.sdk.threads.send({ threadId, mode: "queue-if-active", input: [{ type: "text", text, mentions: [] }] });
+      return { ok: true };
+    },
+    thread_revise_request: async ({ threadId }) => {
+      const [thread, values] = await Promise.all([bb.sdk.threads.get({ threadId }), settings.get()]);
+      const text = revisePrompt(values.revisePrompt, thread.providerId ?? null);
       await bb.sdk.threads.send({ threadId, mode: "queue-if-active", input: [{ type: "text", text, mentions: [] }] });
       return { ok: true };
     },
