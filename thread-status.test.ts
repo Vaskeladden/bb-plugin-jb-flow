@@ -439,7 +439,10 @@ it("sends an Ultrastatus report to the status board, as an update or a new board
   // The board is where the user goes on: its next steps and decisions are controls, in both modes.
   expect(update).toContain("put one card named «Next»");
   expect(update).toContain("I send it from the board");
-  expect(update).toContain("Since last time");
+  expect(update).toContain("«What changed since last time» compares with the board's last version");
+  // One layout for every board, owned by the board plugin: plain-words lines first, then the visuals under plain questions.
+  expect(update).toContain("Lay the board out as the status board layout says");
+  expect(update).toContain("`bb genui show-board --help` prints it");
   // Without the board the report still arrives, in the reply.
   expect(update).toContain("put the report in your reply as step 3 says");
   // The fields the monitor reads and the decisions stay in the chat.
