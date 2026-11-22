@@ -988,6 +988,26 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
   }
 
   /** Every live thread started from this one, at any depth, with its state and last report. */
+
+  // The title of the thread's status board (the genui plugin keeps it), so
+  // Update status brings the board up to date too. Null without a board, or
+  // when genui is not installed or does not answer: the report goes out as before.
+  const boardVersionsSchema = z.object({ versions: z.array(z.object({ title: z.string() }).passthrough()) }).passthrough();
+  async function statusBoardTitle(threadId: string): Promise<string | null> {
+    try {
+      const { versions } = await bb.sdk.plugins.callRpc({
+        pluginId: "genui",
+        method: "board_get",
+        input: { threadId, id: null },
+        outputSchema: boardVersionsSchema,
+      });
+      return versions.at(-1)?.title ?? null;
+    } catch (cause) {
+      bb.log.info(`status: no status board read for ${threadId}: ${cause instanceof Error ? cause.message : String(cause)}`);
+      return null;
+    }
+  }
+
   async function childThreads(parentId: string): Promise<ChildThread[]> {
     const byParent = new Map<string, Thread[]>();
     for (const thread of await listAllActiveThreads()) {
@@ -1191,7 +1211,7 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
       const text =
         kind === "ultra"
           ? ultrastatusRequest(values.ultrastatusPrompt, threadId, children, Date.now(), board ?? null)
-          : statusRequest(values.statusPrompt, threadId, children);
+          : statusRequest(values.statusPrompt, threadId, children, Date.now(), await statusBoardTitle(threadId));
       await bb.sdk.threads.send({ threadId, mode: "queue-if-active", input: [{ type: "text", text, mentions: [] }] });
       return { ok: true, children: children.length };
     },
