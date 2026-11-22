@@ -162,26 +162,39 @@ export const DEFAULT_DONKEY_PROMPT = [
   "If nothing needs a decision from me, write **Next:** with what you will do instead, and leave out the callout.",
 ].join("\n");
 
-// What the Revise button sends when the Revise prompt setting is empty: get a
-// plan review from another model, picked by how hard the work is, and carry on
-// with the better plan. Fable answers through the claude CLI; /second-opinion
-// only reaches Codex from a Claude thread, so the two routes are spelled out.
-export const DEFAULT_REVISE_PROMPT = [
-  "Revise: get another model's view on the plan for this work, use it to guide what you do next, then carry on.",
-  "",
-  "1. Write a short brief to a file in this thread's storage: the goal, what is done, what is left, the plan you intend to follow, the risks you see and your open questions. Include the files and PRs that matter.",
-  "2. Pick the reviewer by how hard the work is:",
-  "   - **Fable 5.2** for the most complex work: architecture or design choices, several systems or repos at once, data or money at stake, a bug you can't explain, or a plan with many unknowns. Run it read-only from this thread's checkout, with the brief as the prompt: `claude -p \"$(cat <brief file>)\" --model claude-fable-5-2 --effort high --allowedTools Read Grep Glob` (the prompt goes first: --allowedTools takes every word after it), and ask it for the simplest plan that finishes the work, what is missing or risky, and what it would do differently.",
-  "   - **Codex** for everything else (a clear fix, a review of a diff, a routine change): run /second-opinion with the brief.",
-  "   Say in one line which one you picked and why.",
-  "3. Compare its answer with your plan. Adopt what is better, keep what you can defend, and say in two to four short lines what changed and why.",
-  "4. Continue the work with the revised plan. Ask me only about a decision that is truly mine.",
-  "",
-  "If the reviewer can't be reached, say so and continue with your own plan. Never write its answer yourself.",
-].join("\n");
+// What the Revise button sends when the Revise prompt setting is empty: a plan
+// review from a model of the other family, then carry on with the better plan.
+// A model never reviews its own family (owner, 2026-11-23): a Claude thread asks
+// Codex, every other thread asks Fable 5.2 through the claude CLI.
+export type ReviseReviewer = "codex" | "fable";
 
-export function revisePrompt(setting: unknown): string {
-  return typeof setting === "string" && setting.trim() !== "" ? setting : DEFAULT_REVISE_PROMPT;
+export function reviseReviewer(providerId: string | null): ReviseReviewer {
+  return providerId === "claude-code" ? "codex" : "fable";
+}
+
+const REVISE_ASK = "the simplest plan that finishes the work, what is missing or risky, and what it would do differently";
+
+const REVISE_ROUTE: Record<ReviseReviewer, string> = {
+  codex: `2. Ask **Codex**: you run on Claude, and a model never reviews its own family. Run /second-opinion with the brief, and ask for ${REVISE_ASK}.`,
+  fable: `2. Ask **Fable 5.2**: you do not run on Claude, and a model never reviews its own family. Run it read-only from this thread's checkout, with the brief as the prompt: \`claude -p "$(cat <brief file>)" --model claude-fable-5-2 --effort high --allowedTools Read Grep Glob\` (the prompt goes first: --allowedTools takes every word after it), and ask for ${REVISE_ASK}.`,
+};
+
+export function defaultRevisePrompt(reviewer: ReviseReviewer): string {
+  return [
+    "Revise: get another model's view on the plan for this work, use it to guide what you do next, then carry on.",
+    "",
+    "1. Write a short brief to a file in this thread's storage: the goal, what is done, what is left, the plan you intend to follow, the risks you see and your open questions. Include the files and PRs that matter.",
+    REVISE_ROUTE[reviewer],
+    "3. Compare its answer with your plan. Adopt what is better, keep what you can defend, and say in two to four short lines what changed and why.",
+    "4. Continue the work with the revised plan. Ask me only about a decision that is truly mine.",
+    "",
+    "If the reviewer can't be reached, say so and continue with your own plan. Never ask a model of your own family instead, and never write its answer yourself.",
+  ].join("\n");
+}
+
+/** The user's own Revise prompt when set, else the built-in one for the thread's agent. */
+export function revisePrompt(setting: unknown, providerId: string | null): string {
+  return typeof setting === "string" && setting.trim() !== "" ? setting : defaultRevisePrompt(reviseReviewer(providerId));
 }
 
 export function donkeyPrompt(setting: unknown): string {

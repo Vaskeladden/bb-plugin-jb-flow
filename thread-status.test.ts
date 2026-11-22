@@ -4,7 +4,9 @@ import {
   CHILD_ROWS_MAX,
   childrenSection,
   DEFAULT_DONKEY_PROMPT,
-  DEFAULT_REVISE_PROMPT,
+  defaultRevisePrompt,
+  revisePrompt,
+  reviseReviewer,
   DEFAULT_STATUS_PROMPT,
   DEFAULT_ULTRASTATUS_PROMPT,
   handBackInstructions,
@@ -269,8 +271,19 @@ it("sends the built-in prompts within the thread_reply limit", () => {
   // A longer default made every Update status press fail its input check.
   expect(DEFAULT_STATUS_PROMPT.length).toBeLessThan(THREAD_REPLY_MAX);
   expect(DEFAULT_DONKEY_PROMPT.length).toBeLessThan(THREAD_REPLY_MAX);
-  expect(DEFAULT_REVISE_PROMPT.length).toBeLessThan(THREAD_REPLY_MAX);
-  expect(DEFAULT_REVISE_PROMPT).toContain("claude-fable-5-2");
+  for (const reviewer of ["codex", "fable"] as const) expect(defaultRevisePrompt(reviewer).length).toBeLessThan(THREAD_REPLY_MAX);
+});
+
+it("Revise asks the other family: Codex for a Claude thread, Fable for any other", () => {
+  expect(reviseReviewer("claude-code")).toBe("codex");
+  for (const provider of ["codex", "acp-grok", "antigravity-acp", null]) expect(reviseReviewer(provider)).toBe("fable");
+  const fromClaude = revisePrompt("", "claude-code");
+  expect(fromClaude).toContain("/second-opinion");
+  expect(fromClaude).not.toContain("claude-fable-5-2");
+  const fromCodex = revisePrompt(undefined, "codex");
+  expect(fromCodex).toContain("claude-fable-5-2");
+  expect(fromCodex).not.toContain("/second-opinion");
+  expect(revisePrompt("My own prompt", "codex")).toBe("My own prompt");
 });
 
 it("a report with nothing pending is done, not Needs me, unless it asks a decision", () => {

@@ -17,7 +17,7 @@ import "./live-activity.css";
 import { useMonitorCollapse } from "./monitor-collapse";
 import type { rpcContract } from "./server";
 import type { ThreadStatus } from "./thread-status";
-import { donkeyPrompt, revisePrompt } from "./status-prompt";
+import { donkeyPrompt } from "./status-prompt";
 import { currentPlatform, shortcutLabel, type Shortcut } from "./palette-model";
 
 export type StatusRequestKind = "status" | "donkey";
@@ -546,7 +546,7 @@ export function ActivityCard({
   onRequestUltrastatus?: () => Promise<void>;
   /** Asks the agent to explain the problem in plain words, with decisions as buttons. */
   onRequestDonkey?: () => Promise<void>;
-  /** Asks the agent to have Fable 5.2 or Codex review its plan, then continue with the revised plan. */
+  /** Asks the agent to have a model of the other family review its plan (Codex for Claude, Fable 5.2 for the rest), then continue. */
   onRequestRevise?: () => Promise<void>;
   /** Parked by you: out of Needs me and the other lists until it runs again (undefined while loading). */
   parked?: boolean;
@@ -756,7 +756,7 @@ export function ActivityCard({
             className="jf-monitor-update jf-monitor-update-quiet"
             disabled={requesting}
             onClick={requestRevise}
-            title="Have Fable 5.2 (complex work) or Codex review the plan, then continue with the better plan"
+            title="Have a model of the other family review the plan (Codex for a Claude thread, Fable 5.2 for any other), then continue with the better plan"
           >
             Revise
           </button>
@@ -1250,7 +1250,7 @@ export function LiveActivityBanner({
         await rpc.call("thread_reply", { threadId, text: donkeyPrompt(values?.donkeyPrompt) });
       }}
       onRequestRevise={async () => {
-        await rpc.call("thread_reply", { threadId, text: revisePrompt(values?.revisePrompt) });
+        await rpc.call("thread_revise_request", { threadId });
       }}
       parked={wakeups.state ? (wakeups.state.parked ?? false) : undefined}
       onTogglePark={wakeups.park}
