@@ -6,5 +6,12 @@
   "forkProcessing": "enabled",
   "extends": [
     "github>Vaskeladden/status:renovate-public#refs/heads/renovate-policy"
+  ],
+  "packageRules": [
+    {
+      "description": "The code is written against @get-bb/plugin-sdk 0.6.54. Later npm releases no longer declare APIs it uses (experimental_useSidebarThreadPullRequest, openThreadPanel, openPanel, experimental_threadHeaderAction, goals), although the bb host still serves them, so a bump fails the type check and the UI tests. Move the SDK by hand together with the code that uses it.",
+      "matchPackageNames": ["@get-bb/plugin-sdk"],
+      "enabled": false
+    }
   ]
 }
