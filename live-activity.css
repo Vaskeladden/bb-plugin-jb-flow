@@ -1031,3 +1031,24 @@
 .jf-live-card .jf-autoprompt > span {
   opacity: 0.75;
 }
+
+/* A narrow composer (a phone, bb's side panel): the heading's buttons wrap onto
+   more rows instead of running past the right edge, and each is a 40 px tap target. */
+@container promptbox-shell (max-width: 35rem) {
+  .jf-live-card .jf-live-heading,
+  .jf-live-card[data-collapsed="true"] .jf-live-heading {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+  /* The title keeps room to be read; the buttons wrap after it. */
+  .jf-live-heading > .jf-live-heading-copy {
+    flex: 1 1 10rem;
+  }
+  .jf-live-heading .jf-monitor-update {
+    min-height: 40px;
+    padding: 6px 12px;
+  }
+  .jf-live-heading .jf-live-toggle {
+    min-height: 40px;
+  }
+}
