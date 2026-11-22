@@ -247,6 +247,8 @@ monitor reads and the next steps. Without that plugin the report arrives in the 
 Once a thread has a board, its agent keeps it current by itself: at the end of each turn that moved the work, and
 when you ask for a status, it publishes an update from what it knows, without checking every row again. Such an
 update never counts as an Ultrastatus: the tab says it was not checked again and when the last Ultrastatus was.
+Every board opens with five plain lines (what we are making, how far we are, what changed, what happens now,
+what it needs from you), then the bar and the next steps, then each visual under a plain question.
 To skip the button, turn on **Status report at hand-back**: agents then end every reply that hands the
 thread back to you (done, blocked, or waiting for your input) with that report, and the monitor keeps itself
 current. Threads pick it up when their session next starts.
