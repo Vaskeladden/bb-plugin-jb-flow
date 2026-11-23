@@ -22,6 +22,7 @@
     "skipLibCheck": false
   },
   "include": [
+    "css.d.ts",
     "decisions.ts",
     "awaiting.ts",
     "leftovers.ts",
