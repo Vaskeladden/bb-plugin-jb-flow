@@ -520,13 +520,14 @@ it("requests the actual Status prompt only on click and leaves the composer draf
   // The server writes the request, so it can add the thread's child threads.
   fireEvent.click(slot.getByRole("button", { name: "Status" }));
   await waitFor(() => expect(status).toHaveBeenCalledTimes(1));
-  expect(status.mock.calls[0]).toEqual([{ threadId: "t1", kind: "status" }]);
+  // Buttons in the chat ask the thread's own agent in the chat, not a background copy.
+  expect(status.mock.calls[0]).toEqual([{ threadId: "t1", kind: "status", inChat: true }]);
   // Ultrastatus goes the same way: the server adds the child threads to the thorough prompt.
   expect(slot.getByRole("button", { name: "Ultrastatus" }).getAttribute("title")).toContain("child threads included");
   fireEvent.click(slot.getByRole("button", { name: "Ultrastatus" }));
   await waitFor(() => expect(status).toHaveBeenCalledTimes(2));
   // It updates the thread's status board. A new board is started from the board itself, not from this card.
-  expect(status.mock.calls[1]).toEqual([{ threadId: "t1", kind: "ultra", board: "update" }]);
+  expect(status.mock.calls[1]).toEqual([{ threadId: "t1", kind: "ultra", board: "update", inChat: true }]);
   expect(slot.queryByRole("button", { name: "New board" })).toBeNull();
   fireEvent.click(slot.getByRole("button", { name: "Donkey" }));
   await waitFor(() => expect(request).toHaveBeenCalledTimes(1));
@@ -568,7 +569,7 @@ it("answers the Status and Donkey shortcuts for the focused thread, one request 
 
   act(() => requestThreadStatus("t1", "status"));
   await waitFor(() => expect(request).toHaveBeenCalledTimes(1));
-  expect(request.mock.calls[0]).toEqual([{ threadId: "t1", kind: "status" }]);
+  expect(request.mock.calls[0]).toEqual([{ threadId: "t1", kind: "status", inChat: true }]);
   act(() => requestThreadStatus("t1", "donkey"));
   expect(request).toHaveBeenCalledTimes(1);
 
