@@ -34,7 +34,7 @@ it("shows full choice text and recommendation, sends only the number, and preven
   fireEvent.click(button);
   fireEvent.click(button);
   expect(reply).toHaveBeenCalledTimes(1);
-  expect(reply.mock.calls[0]).toEqual([{ threadId: "t1", text: "1" }]);
+  expect(reply.mock.calls[0]).toEqual([{ threadId: "t1", text: "1", answer: true }]);
   expect(slot.getByText("Sending…")).toBeTruthy();
   finish({ ok: true });
   await slot.findByText("Reply sent");
@@ -102,7 +102,7 @@ it("offers a go-list as steps to tick and Go, sending go or go with the picked s
   );
   fireEvent.click(await all.findByRole("button", { name: "Go" }));
   await all.findByText("Sent “go”");
-  expect(reply.mock.calls[0]).toEqual([{ threadId: "t1", text: "go" }]);
+  expect(reply.mock.calls[0]).toEqual([{ threadId: "t1", text: "go", answer: true }]);
   expect(all.getByRole("checkbox", { name: /Tidy the docs/ }).hasAttribute("disabled")).toBe(true);
   all.lifecycle.unmount();
 
@@ -119,7 +119,7 @@ it("offers a go-list as steps to tick and Go, sending go or go with the picked s
   fireEvent.click(go);
   await some.findByText("Sent “go 1,3”");
   expect(reply).toHaveBeenCalledTimes(2);
-  expect(reply.mock.calls[1]).toEqual([{ threadId: "t1", text: "go 1,3" }]);
+  expect(reply.mock.calls[1]).toEqual([{ threadId: "t1", text: "go 1,3", answer: true }]);
   some.lifecycle.unmount();
 });
 it("lets a failed Go be retried", async () => {
@@ -166,7 +166,7 @@ it("shows steps and a decision as two groups and sends both answers at once", as
   expect(reply).not.toHaveBeenCalled();
   fireEvent.click(slot.getByRole("button", { name: "Send “go 3; decision: 2”" }));
   await slot.findByText("Sent “go 3; decision: 2”");
-  expect(reply.mock.calls[0]).toEqual([{ threadId: "t1", text: "go 3; decision: 2" }]);
+  expect(reply.mock.calls[0]).toEqual([{ threadId: "t1", text: "go 3; decision: 2", answer: true }]);
   slot.lifecycle.unmount();
 });
 
@@ -194,7 +194,7 @@ it("asks two decisions as two groups and sends each answer tied to its question"
   fireEvent.click(slot.getByRole("radio", { name: /Test site no/ }));
   fireEvent.click(slot.getByRole("button", { name: "Send “decision 1: 1; decision 2: 2”" }));
   await slot.findByText("Sent “decision 1: 1; decision 2: 2”");
-  expect(reply.mock.calls[0]).toEqual([{ threadId: "t1", text: "decision 1: 1; decision 2: 2" }]);
+  expect(reply.mock.calls[0]).toEqual([{ threadId: "t1", text: "decision 1: 1; decision 2: 2", answer: true }]);
   slot.lifecycle.unmount();
 });
 it("keeps many questions in one scroll area, with the heading and the send button outside it", async () => {
@@ -287,7 +287,7 @@ it("sends the trigger word for a shipit or polish option, and the number otherwi
   );
   fireEvent.click(await slot.findByRole("button", { name: /^Reply 1:/ }));
   await waitFor(() => expect(reply).toHaveBeenCalledTimes(1));
-  expect(reply.mock.calls[0]).toEqual([{ threadId: "t1", text: "shipit" }]);
+  expect(reply.mock.calls[0]).toEqual([{ threadId: "t1", text: "shipit", answer: true }]);
   slot.lifecycle.unmount();
 });
 it("puts a shipit answer first when it answers one of several decisions", async () => {
@@ -314,6 +314,6 @@ it("puts a shipit answer first when it answers one of several decisions", async 
   fireEvent.click(radios[2]!);
   fireEvent.click(slot.getByRole("button", { name: /^Send/ }));
   await waitFor(() => expect(reply).toHaveBeenCalledTimes(1));
-  expect(reply.mock.calls[0]).toEqual([{ threadId: "t1", text: "shipit (decision 2); decision 1: 1" }]);
+  expect(reply.mock.calls[0]).toEqual([{ threadId: "t1", text: "shipit (decision 2); decision 1: 1", answer: true }]);
   slot.lifecycle.unmount();
 });

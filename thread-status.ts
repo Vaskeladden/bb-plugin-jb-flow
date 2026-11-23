@@ -231,22 +231,21 @@ export function createThreadStatus(bb: BbPluginApi, changed: () => void) {
       .catch(() => {});
     return result;
   };
-  const capture = (id: string, supplied?: string | null) =>
+  const store = (id: string, reply: () => Promise<string | null>) =>
     serial(id, async () => {
       if (disposed) return null;
       const previous = await read(id);
-      const reply =
-        supplied === undefined
-          ? await lastReply(bb, id)
-          : await turnReply(bb, id, supplied);
+      const text = await reply();
       if (disposed) return previous;
-      const next = recordThreadStatus(id, reply ?? "", previous, Date.now());
+      const next = recordThreadStatus(id, text ?? "", previous, Date.now());
       if (next && next !== previous) {
         await bb.storage.kv.set(key(id), next);
         changed();
       }
       return next;
     });
+  const capture = (id: string, supplied?: string | null) =>
+    store(id, () => (supplied === undefined ? lastReply(bb, id) : turnReply(bb, id, supplied)));
   bb.events.on("thread.idle", ({ thread, lastAssistantText }) =>
     capture(thread.id, lastAssistantText).then(() => {}),
   );
@@ -256,6 +255,8 @@ export function createThreadStatus(bb: BbPluginApi, changed: () => void) {
     }),
   );
   return {
+    /** Records a reply written elsewhere for this thread: a background copy's status report. */
+    record: (id: string, reply: string) => store(id, async () => reply),
     get: (id: string, refresh = true) =>
       refresh
         ? capture(id)

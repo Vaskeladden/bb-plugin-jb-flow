@@ -324,7 +324,7 @@ describe("palette thread actions", () => {
     fireEvent.change(input, { target: { value: "reply" } });
     await waitFor(() => expect(options(slot)[0]).toContain("Reply 1: Ship it"));
     fireEvent.keyDown(input, { key: "Enter" });
-    await waitFor(() => expect(slot.inspection.rpcCalls.find((call) => call.method === "thread_reply")?.input).toEqual({ threadId: "a", text: "1" }));
+    await waitFor(() => expect(slot.inspection.rpcCalls.find((call) => call.method === "thread_reply")?.input).toEqual({ threadId: "a", text: "1", answer: true }));
 
     input = await openPalette(slot);
     fireEvent.keyDown(input, { key: "Tab" });
@@ -342,7 +342,7 @@ describe("palette thread actions", () => {
     fireEvent.change(input, { target: { value: "reply" } });
     await waitFor(() => expect(options(slot)[0]).toContain("Reply 1: Ship it"));
     fireEvent.keyDown(input, { key: "Enter" });
-    await waitFor(() => expect(slot.inspection.rpcCalls.find((call) => call.method === "thread_reply")?.input).toEqual({ threadId: "a", text: "go 1" }));
+    await waitFor(() => expect(slot.inspection.rpcCalls.find((call) => call.method === "thread_reply")?.input).toEqual({ threadId: "a", text: "go 1", answer: true }));
   });
 });
 

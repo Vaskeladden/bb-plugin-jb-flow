@@ -502,7 +502,7 @@ export function Palette({
         detail: reply.recommended ? "Recommended" : undefined,
         keywords: "reply answer choose option decision",
         icon: <Icon name="CornerDownLeft" />,
-        run: () => rpc.call("thread_reply", { threadId: id, text: reply.answer }),
+        run: () => rpc.call("thread_reply", { threadId: id, text: reply.answer, answer: true }),
       });
     }
     const snoozed = flow?.snoozes[id];
@@ -646,7 +646,7 @@ export function Palette({
           keywords: "reply answer choose option decision",
           icon: <Icon name="CornerDownLeft" />,
           thread: true,
-          run: () => rpc.call("thread_reply", { threadId: here.id, text: reply.answer }),
+          run: () => rpc.call("thread_reply", { threadId: here.id, text: reply.answer, answer: true }),
         });
       }
       entries.push(
