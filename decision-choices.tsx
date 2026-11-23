@@ -133,7 +133,7 @@ function Choices({ threadId, updatedAt }: { threadId: string; updatedAt: number 
     setPending(text);
     setError(null);
     try {
-      await rpc.call("thread_reply", { threadId, text });
+      await rpc.call("thread_reply", { threadId, text, answer: true });
       if (mounted.current) {
         setSent(text);
         setPending(null);

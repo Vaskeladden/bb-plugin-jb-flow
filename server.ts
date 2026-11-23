@@ -5,6 +5,7 @@ import { createWorkspaceStorage } from "./workspace-storage";
 import { lastReply } from "./turn-reply";
 import { workspaceSchema, workspaceStateSchema } from "./workspaces";
 import { createThreadStatus, threadStatusSchema } from "./thread-status";
+import { copyAnswerPrefix, createStatusCopies } from "./status-copies";
 import { countSince } from "./catch-up-model";
 import { handBackInstructions, revisePrompt, statusRequest, THREAD_REPLY_MAX, ultrastatusRequest, type ChildThread } from "./status-prompt";
 // jb-flow: snooze threads until a date, a daily stale-thread digest, and the
@@ -256,7 +257,8 @@ export const rpcContract = defineRpcContract({
   },
   thread_reply: {
     // Holds the Update status and Donkey prompts (default or the user's own); a test keeps the defaults under it.
-    input: z.object({ threadId: z.string(), text: z.string().min(1).max(THREAD_REPLY_MAX) }),
+    // `answer`: the text answers the thread's latest report (a decision or step button), which a background copy may have written.
+    input: z.object({ threadId: z.string(), text: z.string().min(1).max(THREAD_REPLY_MAX), answer: z.boolean().optional() }),
     output: z.object({ ok: z.boolean() }),
   },
   thread_revise_request: {
@@ -267,8 +269,9 @@ export const rpcContract = defineRpcContract({
   thread_status_request: {
     // The Status and Ultrastatus buttons: the report prompt, plus the thread's child threads when it has any.
     // `board` (Ultrastatus only) puts the report on the thread's status board: a new version of it, or a new board.
+    // The report runs in a background copy of the thread when one can be made (`inCopy`), so the agent is not interrupted.
     input: z.object({ threadId: z.string(), kind: z.enum(["status", "ultra"]), board: z.enum(["update", "new"]).optional() }),
-    output: z.object({ ok: z.boolean(), children: z.number() }),
+    output: z.object({ ok: z.boolean(), children: z.number(), inCopy: z.boolean() }),
   },
   your_move: {
     input: z.null(),
@@ -791,6 +794,7 @@ export default async function plugin(bb: BbPluginApi) {
   );
   const activity = createActivity(bb, changed);
   const threadStatus = createThreadStatus(bb, changed);
+  const statusCopies = createStatusCopies(bb, (sourceId, reply) => threadStatus.record(sourceId, reply));
   const awaiting = createAwaiting(bb, changed);
   const gitClean = createGitClean(bb, changed, reads);
 
@@ -1204,10 +1208,13 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
       return { opened: next.id };
     },
     decision_options: async ({ threadId }) => {
-      return nextMove((await lastReply(bb, threadId)) ?? "");
+      const fromCopy = await statusCopies.latest(threadId);
+      return nextMove(fromCopy?.reply ?? (await lastReply(bb, threadId)) ?? "");
     },
-    thread_reply: async ({ threadId, text }) => {
-      await bb.sdk.threads.send({ threadId, mode: "queue-if-active", input: [{ type: "text", text, mentions: [] }] });
+    thread_reply: async ({ threadId, text, answer }) => {
+      const fromCopy = answer === true ? await statusCopies.latest(threadId) : null;
+      const sent = fromCopy === null ? text : `${copyAnswerPrefix(fromCopy)}\n\n${text}`;
+      await bb.sdk.threads.send({ threadId, mode: "queue-if-active", input: [{ type: "text", text: sent, mentions: [] }] });
       return { ok: true };
     },
     thread_revise_request: async ({ threadId }) => {
@@ -1223,8 +1230,9 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
         kind === "ultra"
           ? ultrastatusRequest(values.ultrastatusPrompt, threadId, children, Date.now(), board ?? null)
           : statusRequest(values.statusPrompt, threadId, children, Date.now(), await statusBoardTitle(threadId));
+      if (await statusCopies.start(threadId, text, kind)) return { ok: true, children: children.length, inCopy: true };
       await bb.sdk.threads.send({ threadId, mode: "queue-if-active", input: [{ type: "text", text, mentions: [] }] });
-      return { ok: true, children: children.length };
+      return { ok: true, children: children.length, inCopy: false };
     },
     your_move: () => yourMove(),
     unreleased: ({ projectId, refresh }) => unreleased(projectId, refresh),
