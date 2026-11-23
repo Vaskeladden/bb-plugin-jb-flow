@@ -269,8 +269,9 @@ export const rpcContract = defineRpcContract({
   thread_status_request: {
     // The Status and Ultrastatus buttons: the report prompt, plus the thread's child threads when it has any.
     // `board` (Ultrastatus only) puts the report on the thread's status board: a new version of it, or a new board.
-    // The report runs in a background copy of the thread when one can be made (`inCopy`), so the agent is not interrupted.
-    input: z.object({ threadId: z.string(), kind: z.enum(["status", "ultra"]), board: z.enum(["update", "new"]).optional() }),
+    // The report runs in a background copy of the thread when one can be made (`inCopy`), so the agent is not interrupted,
+    // except with `inChat`: the buttons in the chat itself ask the thread's own agent there, as a message in the chat.
+    input: z.object({ threadId: z.string(), kind: z.enum(["status", "ultra"]), board: z.enum(["update", "new"]).optional(), inChat: z.boolean().optional() }),
     output: z.object({ ok: z.boolean(), children: z.number(), inCopy: z.boolean() }),
   },
   your_move: {
@@ -1223,14 +1224,14 @@ async function yourMove({ withAsk = true }: { withAsk?: boolean } = {}) {
       await bb.sdk.threads.send({ threadId, mode: "queue-if-active", input: [{ type: "text", text, mentions: [] }] });
       return { ok: true };
     },
-    thread_status_request: async ({ threadId, kind, board }) => {
+    thread_status_request: async ({ threadId, kind, board, inChat }) => {
       const children = await childThreads(threadId);
       const values = await settings.get();
       const text =
         kind === "ultra"
           ? ultrastatusRequest(values.ultrastatusPrompt, threadId, children, Date.now(), board ?? null)
           : statusRequest(values.statusPrompt, threadId, children, Date.now(), await statusBoardTitle(threadId));
-      if (await statusCopies.start(threadId, text, kind)) return { ok: true, children: children.length, inCopy: true };
+      if (inChat !== true && (await statusCopies.start(threadId, text, kind))) return { ok: true, children: children.length, inCopy: true };
       await bb.sdk.threads.send({ threadId, mode: "queue-if-active", input: [{ type: "text", text, mentions: [] }] });
       return { ok: true, children: children.length, inCopy: false };
     },

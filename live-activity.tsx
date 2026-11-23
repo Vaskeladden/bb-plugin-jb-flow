@@ -1241,10 +1241,11 @@ export function LiveActivityBanner({
       watches={wakeups.state?.watches ?? []}
       onCancelWatch={wakeups.cancel}
       onRequestStatus={async () => {
-        await rpc.call("thread_status_request", { threadId, kind: "status" });
+        // The chat's own buttons ask in the chat; the side panel's board runs its requests in a background copy.
+        await rpc.call("thread_status_request", { threadId, kind: "status", inChat: true });
       }}
       onRequestUltrastatus={async () => {
-        await rpc.call("thread_status_request", { threadId, kind: "ultra", board: "update" });
+        await rpc.call("thread_status_request", { threadId, kind: "ultra", board: "update", inChat: true });
       }}
       onRequestDonkey={async () => {
         await rpc.call("thread_reply", { threadId, text: donkeyPrompt(values?.donkeyPrompt) });
