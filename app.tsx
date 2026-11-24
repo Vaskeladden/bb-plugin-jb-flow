@@ -92,6 +92,7 @@ import { cn } from "@/lib/utils";
 import { Studio, StudioReview, STUDIO_REVIEW_TAB } from "./studio";
 import { mountShellAppearance, ShellAppearancePreference } from "./shell-appearance";
 import { LiveActivityBanner, STATUS_REQUEST_SHORTCUTS, requestThreadStatus } from "./live-activity";
+import { isRunningStatus, runningThreadIds, stopAgentCommand } from "./stop-agent";
 import { PALETTE_EVENT, Palette, usePaletteTrigger } from "./palette";
 import { CatchUpHomeEntry, CatchUpOverlay, CatchUpPage, useCatchUpBadge, useCatchUpTrigger } from "./catch-up";
 import { CATCH_UP_EVENT } from "./catch-up-model";
@@ -588,7 +589,7 @@ function ThreadRow({
     void navigator.clipboard.writeText(text);
   };
   const shortcut = useSidebarThreadShortcut(thread.id);
-  const busy = thread.status === "active" || thread.status === "starting";
+  const busy = isRunningStatus(thread.status);
   const { pullRequest } = useSidebarThreadPullRequest(thread.id);
   const prs = threadPrs(createdPrs, pullRequest);
   const run = busy ? runInfo(running, now) : null;
@@ -2369,6 +2370,19 @@ let commandRpc: ReturnType<typeof useRpc<typeof rpcContract>> | null = null;
 /** The Catch up setting, for the command's availability check (it can't use hooks). */
 let catchUpEnabled = false;
 const SNOOZE_EVENT = "jb-flow:snooze";
+/** Threads whose agent is running, for the stop command's availability check (it can't use hooks). */
+let runningThreads: ReadonlySet<string> = new Set();
+let stopAgentRpc: ReturnType<typeof useRpc<typeof rpcContract>> | null = null;
+
+/** Feeds the stop command the running threads and an RPC client; mounted once per window. */
+function StopAgentHost() {
+  stopAgentRpc = useRpc<typeof rpcContract>();
+  const { threads } = useSidebarThreads();
+  useEffect(() => {
+    runningThreads = runningThreadIds(threads);
+  }, [threads]);
+  return null;
+}
 
 function FocusReporter() {
   const rpc = useRpc<typeof rpcContract>();
@@ -2616,6 +2630,7 @@ export default definePluginApp((app) => {
   });
   app.contentScripts.register({ id: "plan-expander", mount: mountPlanExpander });
   app.slots.experimental_appOverlay({ id: "focus-reporter", component: FocusReporter });
+  app.slots.experimental_appOverlay({ id: "stop-agent", component: StopAgentHost });
   app.slots.experimental_sidebarNavigation({
     id: "workspaces", title: "JB Flow workspaces", placement: "list",
     description: "Workspace tabs with projects, threads, sections and tools.",
@@ -2743,6 +2758,13 @@ export default definePluginApp((app) => {
       if (threadId) requestThreadStatus(threadId, "donkey");
     },
   });
+  app.commands.register(
+    stopAgentCommand({
+      isRunning: (threadId) => runningThreads.has(threadId),
+      // The row menu's "Stop run" path: the server's thread_stop, i.e. bb.sdk.threads.stop.
+      stop: async (threadId) => stopAgentRpc?.call("thread_stop", { threadId }),
+    }),
+  );
   app.commands.register({
     id: "watch-ci",
     title: "Watch CI and reviews for this thread's PRs",
