@@ -469,6 +469,10 @@ it("sends an Ultrastatus report to the status board, as an update or a new board
   // One layout for every board, owned by the board plugin: plain-words lines first, then the visuals under plain questions.
   expect(update).toContain("Lay the board out as the status board layout says");
   expect(update).toContain("`bb genui show-board --help` prints it");
+  // On a bug thread the layout's bug tracker takes the bar's place; the prompt hands it to the layout instead of asking for a bar.
+  expect(update).toContain("then come the bar (on a bug thread, the layout's bug tracker instead) and the «Next» card");
+  expect(update).toContain("Right after the bar or the bug tracker, put one card named «Next»");
+  expect(DEFAULT_ULTRASTATUS_PROMPT).toContain("On a bug thread, the bug tracker of the status board layout takes the bar's place");
   // Without the board the report still arrives, in the reply.
   expect(update).toContain("put the report in your reply as step 3 says");
   // The fields the monitor reads and the decisions stay in the chat.
