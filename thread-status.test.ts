@@ -469,6 +469,15 @@ it("sends an Ultrastatus report to the status board, as an update or a new board
   // One layout for every board, owned by the board plugin: plain-words lines first, then the visuals under plain questions.
   expect(update).toContain("Lay the board out as the status board layout says");
   expect(update).toContain("`bb genui show-board --help` prints it");
+  // On a bug thread the layout's bug tracker takes the bar's place; the prompt hands it to the layout instead of asking for a bar.
+  expect(update).toContain("then come the bar (on a bug thread, the layout's bug tracker instead) and the «Next» card");
+  expect(update).toContain("Right after the bar or the bug tracker, put one card named «Next»");
+  expect(DEFAULT_ULTRASTATUS_PROMPT).toContain("On a bug thread, the bug tracker of the status board layout takes the bar's place");
+  // The tracker owns the fix's stages and proof, so the matrix does not repeat them; without the layout the bar stays.
+  expect(DEFAULT_ULTRASTATUS_PROMPT).toContain("with neither, keep the bar");
+  expect(DEFAULT_ULTRASTATUS_PROMPT).toContain("On a bug thread the tracker already shows the fix's stages and their proof: the matrix holds only other work");
+  // Keeping an old board's title and rows does not hold a bug board's title or its old bar rows.
+  expect(update).toContain("on a bug thread the layout's tracker rules on the title and on older bar rows come first");
   // Without the board the report still arrives, in the reply.
   expect(update).toContain("put the report in your reply as step 3 says");
   // The fields the monitor reads and the decisions stay in the chat.
