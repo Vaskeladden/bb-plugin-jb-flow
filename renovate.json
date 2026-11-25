@@ -12,6 +12,11 @@
       "description": "The code is written against @get-bb/plugin-sdk 0.6.54. Later npm releases no longer declare APIs it uses (experimental_useSidebarThreadPullRequest, openThreadPanel, openPanel, experimental_threadHeaderAction, goals), although the bb host still serves them, so a bump fails the type check and the UI tests. Move the SDK by hand together with the code that uses it.",
       "matchPackageNames": ["@get-bb/plugin-sdk"],
       "enabled": false
+    },
+    {
+      "description": "@get-bb/plugin-sdk 0.6.54 (and every later release so far) declares the optional peer @types/better-sqlite3 ^7.6.12. A major 8+ makes a plain npm install fail with ERESOLVE, which breaks installing and updating the plugin in bb. Stay on 7 until the SDK's peer range allows more, then lift this rule together with the SDK bump.",
+      "matchPackageNames": ["@types/better-sqlite3"],
+      "allowedVersions": "<8"
     }
   ]
 }
