@@ -1,6 +1,6 @@
 // Finds the numbered options an agent ends its message with ("1. … 2. …"),
 // so the composer can offer them as one-click replies.
-import { parseStatusReport } from "./thread-status.ts";
+import { parseStatusReport, uiStepGroups } from "./thread-status.ts";
 
 export type DecisionOption = { n: number; text: string; recommended: boolean };
 /** "go": steps to run, answered with "go" or "go 1,3". "choice": answered with one number. */
@@ -86,16 +86,17 @@ export function parseDecisionOptions(message: string, { strict = true }: { stric
   return options;
 }
 
-/** One group of options in "Your next move": a go-list or a decision. */
+/** One group of options a reply asks: a go-list or a decision. */
 export type DecisionGroup = { mode: DecisionMode; question: string; options: DecisionOption[] };
 
 /**
- * What "Your next move" offers for a thread's last reply: a status report's
- * groups of next steps (a go-list, a decision, or one of each), or else a
+ * What a thread's last reply asks: a status report's groups of next steps (a
+ * go-list, a decision, or one of each), or else its ```ui questions, or else a
  * trailing numbered choice, and whether each is answered with "go" or a number.
  */
 export function nextMove(message: string): { groups: DecisionGroup[] } {
-  const groups = parseStatusReport(message, 0)?.stepGroups ?? [];
+  const report = parseStatusReport(message, 0)?.stepGroups ?? [];
+  const groups = report.length ? report : uiStepGroups(message);
   if (groups.length) {
     return {
       groups: groups.map((group) => ({

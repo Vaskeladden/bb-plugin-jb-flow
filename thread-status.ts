@@ -135,17 +135,55 @@ function stepGroup(lines: readonly string[], decision: boolean): StepGroup | nul
   return { mode: decision ? "choice" : "go", question: questionOf(lines), items, recommended };
 }
 
+const UI_FENCE = /```ui[^\n]*\n([\s\S]*?)```/g;
+/** A quoted string in a ```ui block; its text is group 1. */
+const QUOTED = String.raw`"((?:[^"\\]|\\.)*)"`;
+const CARD_TITLE = new RegExp(String.raw`\bCard\(\s*${QUOTED}`);
+const STEP_TITLE = new RegExp(String.raw`\btitle:\s*${QUOTED}`, "g");
+// A Button with no action is a choice: its label is the answer. Group 1 the label, group 2 its named arguments.
+const CHOICE_BUTTON = new RegExp(String.raw`\bButton\(\s*${QUOTED}((?:\s*,\s*(?:variant|icon)\s*:\s*"[^"]*")*)\s*\)`, "g");
+
+/**
+ * What the ```ui blocks of a message ask, which genui shows in "Your next
+ * move": a Plan is steps to approve (a go-list); Buttons without an action, a
+ * Form or a Decision ask a decision. A Form or Decision lists no items: its
+ * fields are not one list of options.
+ */
+export function uiStepGroups(text: string): StepGroup[] {
+  const groups: StepGroup[] = [];
+  for (const [, code = ""] of text.matchAll(UI_FENCE)) {
+    const question = plain(CARD_TITLE.exec(code)?.[1] ?? "").slice(0, 300);
+    if (/\bPlan\(/.test(code)) {
+      const items = [...code.matchAll(STEP_TITLE)].map((match) => plain(match[1]!).slice(0, 300)).slice(0, 9);
+      if (items.length) groups.push({ mode: "go", question, items, recommended: [] });
+      continue;
+    }
+    const buttons = [...code.matchAll(CHOICE_BUTTON)].slice(0, 9);
+    if (buttons.length) {
+      const recommended = buttons.flatMap((match, index) => (/variant\s*:\s*"primary"/.test(match[2] ?? "") || /\(recommended\)/i.test(match[1]!) ? [index + 1] : []));
+      const items = buttons.map((match) => plain(match[1]!.replace(/\s*\(recommended\)\s*/i, " ")).slice(0, 300));
+      groups.push({ mode: "choice", question, items, recommended });
+    } else if (/\b(?:Form|Decision)\(/.test(code)) {
+      groups.push({ mode: "choice", question, items: [], recommended: [] });
+    }
+  }
+  return groups.slice(0, MAX_STEP_GROUPS);
+}
+
 /**
  * The "### Next steps" section: go-lists and numbered decisions, one group per
- * **Path forward:** or **Decision needed:** block, or "Doing now". Agents also
- * ask several questions under one heading, each list numbered from 1 under its
- * own line, so a list that restarts at 1 is a new group too.
+ * **Path forward:** or **Decision needed:** block or ```ui question, or "Doing
+ * now". Agents also ask several questions under one heading, each list
+ * numbered from 1 under its own line, so a list that restarts at 1 is a new
+ * group too.
  */
 export function parseNextSteps(reply: string): Pick<StatusReport, "stepGroups" | "doingNow"> {
   const section =
     /(?:^|\n)#{2,4}\s+Next steps?\s*\r?\n([\s\S]*?)(?=\n#{1,4}\s|$)/i.exec(reply)?.[1] ?? "";
   if (!section.trim()) return {};
-  const lines = section.split("\n").map((line) => line.replace(/^\s*(?:>\s?)+/, ""));
+  const ui = uiStepGroups(section);
+  // A ```ui block's lines are not a numbered list.
+  const lines = section.replace(UI_FENCE, "").split("\n").map((line) => line.replace(/^\s*(?:>\s?)+/, ""));
   const doing = /\*\*Doing now:\*\*\s*(.+)/i.exec(lines.join("\n"))?.[1];
   const blocks: { lines: string[]; decision: boolean }[] = [{ lines: [], decision: false }];
   for (const line of lines) {
@@ -167,10 +205,10 @@ export function parseNextSteps(reply: string): Pick<StatusReport, "stepGroups" |
     if (/\*\*Decision needed:\*\*/i.test(line)) current.decision = true;
     current.lines.push(line);
   }
-  const stepGroups = blocks
-    .map((block) => stepGroup(block.lines, block.decision))
-    .filter((group): group is StepGroup => group !== null)
-    .slice(0, MAX_STEP_GROUPS);
+  const stepGroups = [...blocks.map((block) => stepGroup(block.lines, block.decision)).filter((group): group is StepGroup => group !== null), ...ui].slice(
+    0,
+    MAX_STEP_GROUPS,
+  );
   return { stepGroups, ...(doing ? { doingNow: plain(doing).slice(0, 500) } : {}) };
 }
 

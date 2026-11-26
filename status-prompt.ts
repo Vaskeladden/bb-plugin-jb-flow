@@ -3,6 +3,25 @@ import { idleFor, THREAD_STATE_LABEL, type ThreadStateId } from "./thread-states
 /** Longest prompt Update status or Donkey may send into a thread (the thread_reply contract). */
 export const THREAD_REPLY_MAX = 8000;
 
+// How a report asks: genui ```ui blocks, which genui shows in "Your next move"
+// under the chat until the user answers. A go-list is a Plan (approving it
+// sends "Go ahead with the plan", or the steps kept); a decision is Buttons
+// whose label is the answer; several decisions are one Form.
+const PATH_FORWARD = [
+  "```ui",
+  'Card("Path forward: <one plain line>", [Plan([',
+  '  {title: "<step>", detail: "<why, a few words> (simpler)"},',
+  '  {title: "<step>", detail: "<why> (adds)"}',
+  "])])",
+  "```",
+];
+const DECISION = [
+  "```ui",
+  'Card("<question in plain words>", [Button("<option> · <why> (recommended)", variant: "primary"), Button("<option> · <why>")])',
+  "```",
+  "Several decisions: one Card with one Form holding a Radio per question, the recommended option first.",
+];
+
 // What the Status button sends when the Status report prompt setting is empty.
 // The thread monitor parses these fields (see thread-status.ts).
 export const DEFAULT_STATUS_PROMPT = [
@@ -31,25 +50,15 @@ export const DEFAULT_STATUS_PROMPT = [
   "```",
   "",
   "### Next steps",
-  "If a pull request is ready to review, merge or ship and this repo has the skills, never offer a manual merge or tell me to merge it. Ask it as a decision whose options start with the trigger word: `shipit · <what it does for me>` (runs /pr-shipit: the review loop, then the merge) and `polish · <what it does for me>` (runs /pr-polish: the same loop, no merge). Picking one sends that word. Name the one you recommend in **Next:** too.",
+  "Ask in ```ui blocks: they show in Your next move under the chat, where I answer. If a pull request is ready to review, merge or ship and this repo has the skills, never offer a manual merge or tell me to merge it. Ask it as a decision whose buttons start with the trigger word: `shipit · <what it does for me>` (runs /pr-shipit: the review loop, then the merge) and `polish · <what it does for me>` (runs /pr-polish: the same loop, no merge). Picking one sends its label. Name the one you recommend in **Next:** too.",
   "",
   "Before you suggest more, look at the whole feature, not just the last step. Tag each step (simpler), (same) or (adds), and prefer steps that remove or merge something. If Health is Entropy +2 or worse, or your last three steps all added something, step 1 must be: check the whole feature and simplify (the architecture-check skill, when the repo has it). When the goal is met, say \"Nothing pending.\" instead of inventing more work.",
   "",
-  "If there are steps you can do yourself, recommend a path forward and offer them as a numbered list in a callout. Don't start them until I reply.",
-  "> [!TIP]",
-  "> **Path forward:** <one plain line>",
-  "> 1. <step> · <why, a few words> (simpler)",
-  "> 2. <step> · <why> (adds)",
-  ">",
-  "> Reply **go** for all, or **go 1,3**.",
+  "If there are steps you can do yourself, recommend a path forward: one plain line, then the steps as a Plan I approve, untick or change. Don't start them until I reply.",
+  ...PATH_FORWARD,
   "",
-  "If you need a decision from me instead, ask in the same place:",
-  "> [!TIP]",
-  "> **Decision needed:** <question in plain words>",
-  "> 1. <option> · <why> (recommended)",
-  "> 2. <option> · <why>",
-  ">",
-  "> Reply with the number.",
+  "If you need a decision from me instead, ask it the same way:",
+  ...DECISION,
 ].join("\n");
 
 // What the Ultrastatus button sends when the Ultrastatus prompt setting is empty:
@@ -109,29 +118,19 @@ export const DEFAULT_ULTRASTATUS_PROMPT = [
   "```",
   "",
   "### Next steps",
-  "If a pull request is ready to review, merge or ship and this repo has the skills, never offer a manual merge or tell me to merge it. Ask it as a decision whose options start with the trigger word: `shipit · <what it does for me>` (runs /pr-shipit: the review loop, then the merge) and `polish · <what it does for me>` (runs /pr-polish: the same loop, no merge).",
+  "Ask in ```ui blocks: they show in Your next move under the chat, where I answer. If a pull request is ready to review, merge or ship and this repo has the skills, never offer a manual merge or tell me to merge it. Ask it as a decision whose buttons start with the trigger word: `shipit · <what it does for me>` (runs /pr-shipit: the review loop, then the merge) and `polish · <what it does for me>` (runs /pr-polish: the same loop, no merge).",
   "",
-  "Offer the steps you can do yourself as a numbered list in a callout, the ones that close the most of what is left first. Don't start them until I reply. When the goal is met, say \"Nothing pending.\" instead of inventing more work.",
-  "> [!TIP]",
-  "> **Path forward:** <one plain line>",
-  "> 1. <step> · <why, a few words>",
-  "> 2. <step> · <why>",
-  ">",
-  "> Reply **go** for all, or **go 1,3**.",
+  "Offer the steps you can do yourself as a Plan, the ones that close the most of what is left first. Don't start them until I reply. When the goal is met, say \"Nothing pending.\" instead of inventing more work.",
+  ...PATH_FORWARD,
   "",
-  "Ask each decision that is mine in its own callout:",
-  "> [!TIP]",
-  "> **Decision needed:** <question in plain words>",
-  "> 1. <option> · <why> (recommended)",
-  "> 2. <option> · <why>",
-  ">",
-  "> Reply with the number.",
+  "Ask each decision that is mine:",
+  ...DECISION,
 ].join("\n");
 
 // What the Donkey button sends when the Donkey prompt setting is empty: the real
-// problem in plain words with an example, then the decisions in the format
-// "Your next move" turns into buttons (a report with Goal and Blocked, and one
-// **Decision needed:** callout per question under ### Next steps).
+// problem in plain words with an example, then the decisions as ```ui blocks,
+// which genui shows in "Your next move" (a report with Goal and Blocked, and
+// the questions under ### Next steps).
 export const DEFAULT_DONKEY_PROMPT = [
   "What is the real problem here? Explain it to me like I'm a donkey, then stop.",
   "",
@@ -150,16 +149,11 @@ export const DEFAULT_DONKEY_PROMPT = [
   "<a concrete example: what happens today, and what should happen instead>",
   "",
   "### Next steps",
-  "Ask me each decision I must make in its own callout. Give two to four options, mark one recommended, and say in a few words what each option means for me:",
+  "Ask me each decision I must make in a ```ui block; it shows in Your next move under the chat. Give two to four options, the recommended one first, and say in a few words what each option means for me:",
   "When a decision is about shipping or reviewing a pull request, start those options with the trigger word: `shipit · …` (review loop, then merge) and `polish · …` (same loop, no merge). Never offer a manual merge.",
-  "> [!TIP]",
-  "> **Decision needed:** <question in plain words>",
-  "> 1. <option> · <what it means for me> (recommended)",
-  "> 2. <option> · <what it means for me>",
-  ">",
-  "> Reply with the number.",
+  ...DECISION,
   "",
-  "If nothing needs a decision from me, write **Next:** with what you will do instead, and leave out the callout.",
+  "If nothing needs a decision from me, write **Next:** with what you will do instead, and leave out the block.",
 ].join("\n");
 
 // What the Revise button sends when the Revise prompt setting is empty: a plan

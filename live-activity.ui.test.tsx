@@ -534,7 +534,7 @@ it("requests the actual Status prompt only on click and leaves the composer draf
   expect(request.mock.calls[0]).toEqual([
     expect.objectContaining({
       threadId: "t1",
-      text: expect.stringContaining("**Decision needed:**"),
+      text: expect.stringContaining("Button("),
     }),
   ]);
   expect(slot.inspection.composer.text).toBe("My unsent draft");
@@ -578,7 +578,7 @@ it("answers the Status and Donkey shortcuts for the focused thread, one request 
   act(() => requestThreadStatus("t1", "donkey"));
   await waitFor(() => expect(request).toHaveBeenCalledTimes(2));
   expect(request.mock.calls[1]).toEqual([
-    expect.objectContaining({ threadId: "t1", text: expect.stringContaining("**Decision needed:**") }),
+    expect.objectContaining({ threadId: "t1", text: expect.stringContaining("Button(") }),
   ]);
   await act(async () => finish());
   slot.lifecycle.unmount();

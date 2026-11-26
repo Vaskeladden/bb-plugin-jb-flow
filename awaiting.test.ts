@@ -165,3 +165,10 @@ test("an optional offer in a report that says nothing is pending stays Ready", (
   assert.ok(!pendsDecision("**Goal:** Ship\n\n**Done:** Built\n\n**Next:** Nothing pending.\n\n### Next steps\n> **Path forward:** Optional\n> 1. Tidy up · nice\n>\n> Reply **go** for all."));
   assert.equal(state("Nothing needs approval. Waiting for your next message."), "ready");
 });
+
+test("a ```ui question leaves a decision open, a Plan offered after Nothing pending does not", () => {
+  assert.ok(pendsDecision('Which cache?\n\n```ui\nCard("Cache", [Button("Memory"), Button("Redis")])\n```'));
+  assert.ok(pendsDecision('**Goal:** Ship\n\n**Done:** Built\n\n**Next:** Nothing pending.\n\n### Next steps\n```ui\nCard("Ship it?", [Button("shipit · merge"), Button("Wait")])\n```'));
+  assert.ok(!pendsDecision('**Goal:** Ship\n\n**Done:** Built\n\n**Next:** Nothing pending.\n\n### Next steps\n```ui\nCard("Path forward: optional", [Plan([{title: "Tidy up", detail: "nice"}])])\n```'));
+  assert.ok(!pendsDecision('Done.\n\n```ui\nCard("Result", [Metric("Tests", "494"), Button("Open", OpenUrl("https://x.dev"))])\n```'));
+});
