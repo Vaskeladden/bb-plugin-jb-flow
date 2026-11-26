@@ -562,12 +562,6 @@ export function PullRequestsPanel({
   );
 }
 
-// --- decision chips (composer banner) ---------------------------------------------------
-// When the agent's last message ends with numbered options, offer them as
-// one-click replies above the composer. Sends just the number.
-
-export { DecisionChips } from "./decision-choices";
-
 // --- Your move (homepage) ---------------------------------------------------------------
 
 /** `lead` sits above the list (the Catch up line), whatever the list shows. */

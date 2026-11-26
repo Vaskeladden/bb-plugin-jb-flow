@@ -394,7 +394,7 @@ export default async function plugin(bb: BbPluginApi) {
       type: "string",
       label: "Donkey prompt",
       description:
-        "What the Donkey button sends: explain the real problem in plain words with an example, and ask each decision as a **Decision needed:** callout so Your next move offers buttons. Leave empty for the built-in prompt.",
+        "What the Donkey button sends: explain the real problem in plain words with an example, and ask each decision as a ```ui block, which Your next move shows under the chat. Leave empty for the built-in prompt.",
       experimental_multiline: true,
       default: "",
     },

@@ -68,7 +68,7 @@ undo.
 When a user asks "what did I miss?" or wants to clear unread threads, point them here.
 Hand-backs that end with a status report (Goal/Done/Next/Blocked plus Next steps) read
 well in Catch up: the latest reply is at the bottom of the card's thread, and its next
-steps show under *Your next move* in the composer.
+steps show under *Your next move* (genui's box) above the message field.
 
 ## Snooze
 

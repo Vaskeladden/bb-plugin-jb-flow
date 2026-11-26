@@ -23,7 +23,6 @@ import {
   experimental_useSidebarThreadSplit as useSidebarThreadSplit,
   useBbContext,
   useBbNavigate,
-  useComposer,
   useSidebarSplitLayout,
   useSidebarThreadShortcut,
   useSettings,
@@ -41,7 +40,6 @@ import { useSidebarThreadActions } from "./thread-actions";
 import type { Leftover } from "./leftovers";
 import { RepoCommandsPanel, RepoCommandsSettings } from "./repo-panel";
 import {
-  DecisionChips,
   UnreleasedSection, YourMoveSection,
   HeaderStatusStrip,
   PR_TONE,
@@ -405,16 +403,6 @@ function PullRequestsTab({ threadId, params }: { threadId: string; params: JsonV
   const { state } = useFlowState();
   const { pullRequest } = useSidebarThreadPullRequest(threadId);
   return <PullRequestsPanel threadId={threadId} params={params} state={state} branchPr={pullRequest} />;
-}
-
-function DecisionChipsBanner() {
-  const composer = useComposer();
-  const threadId = composer.scope.kind === "thread" ? composer.scope.threadId : null;
-  const { threads } = useSidebarThreads();
-  const thread = threadId ? threads.find((candidate) => candidate.id === threadId) : undefined;
-  // Stays while you type: the question lives here, so it must not vanish with a draft.
-  if (composer.isRunning) return null;
-  return <DecisionChips threadId={threadId} updatedAt={thread?.updatedAt ?? null} idle={thread?.status === "idle"} />;
 }
 
 /** The row after this one (or before, at the end), to keep focus on after this row moves away. */
@@ -2802,11 +2790,6 @@ export default definePluginApp((app) => {
     title: "Repo commands",
     description: "Per-project buttons for the thread side panel.",
     component: RepoCommandsSettings,
-  });
-  // Banners render in registration order: the reply choices sit above the monitor.
-  app.composer.customize({
-    id: "decision-chips",
-    banners: [{ id: "decision-chips", chrome: "bare", component: DecisionChipsBanner }],
   });
   app.composer.customize({
     id: "live-activity",

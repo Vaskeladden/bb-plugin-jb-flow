@@ -23,6 +23,7 @@ import {
 import {
   createThreadStatus,
   parseStatusReport,
+  uiStepGroups,
   recordThreadStatus,
   reportsNothingPending,
 } from "./thread-status";
@@ -392,7 +393,7 @@ it("asks Ultrastatus for a checked, visual report the monitor can still read", (
   expect(ultrastatusRequest("", "thr_parent", [])).toBe(DEFAULT_ULTRASTATUS_PROMPT);
   // Tools that tell a button's message from the user's own words match on this opening.
   expect(DEFAULT_ULTRASTATUS_PROMPT.startsWith("Ultrastatus: give me a thorough, checked status report")).toBe(true);
-  for (const part of ["Check each piece against its source", "**Matrix.**", "```ui", "**claimed**", "--include-archived", "### Progress", "**Decision needed:**"]) {
+  for (const part of ["Check each piece against its source", "**Matrix.**", "```ui", "**claimed**", "--include-archived", "### Progress", "Plan([", "Button("]) {
     expect(DEFAULT_ULTRASTATUS_PROMPT).toContain(part);
   }
   // A reply in that shape: pictures first, then the fields the monitor reads.
@@ -417,9 +418,9 @@ it("asks Ultrastatus for a checked, visual report the monitor can still read", (
       "```",
       "",
       "### Next steps",
-      "> [!TIP]",
-      "> **Path forward:** Finish the import",
-      "> 1. Fix the date format · the last failing check",
+      "```ui",
+      'Card("Path forward: Finish the import", [Plan([{title: "Fix the date format", detail: "the last failing check"}])])',
+      "```",
     ].join("\n"),
     1,
   );
@@ -428,7 +429,22 @@ it("asks Ultrastatus for a checked, visual report the monitor can still read", (
     { label: "Export", percent: 100 },
     { label: "Import", percent: 30 },
   ]);
-  expect(report?.stepGroups?.[0]?.items).toHaveLength(1);
+  expect(report?.stepGroups).toEqual([{ mode: "go", question: "Path forward: Finish the import", items: ["Fix the date format"], recommended: [] }]);
+});
+
+it("reads the questions of ```ui blocks: a Plan is a go-list, Buttons a decision, a Form a decision without items", () => {
+  const ask = (code: string) => `**Goal:** Ship\n\n**Done:** Built\n\n### Next steps\n\`\`\`ui\n${code}\n\`\`\``;
+  expect(parseStatusReport(ask('Card("Ship it?", [Button("shipit · review, then merge", variant: "primary"), Button("polish · review only")])'), 1)?.stepGroups).toEqual([
+    { mode: "choice", question: "Ship it?", items: ["shipit · review, then merge", "polish · review only"], recommended: [1] },
+  ]);
+  expect(parseStatusReport(ask('Card("Two questions", [Form([Radio($a, ["x", "y"]), Toggle($b, "Now")])])'), 1)?.stepGroups).toEqual([
+    { mode: "choice", question: "Two questions", items: [], recommended: [] },
+  ]);
+  // A button that does something is not a question.
+  expect(parseStatusReport(ask('Card("Links", [Button("Open", OpenUrl("https://x.dev"))])'), 1)?.stepGroups).toEqual([]);
+  expect(uiStepGroups('Pick one:\n\n```ui\nCard("Cache", [Button("Memory (recommended)"), Button("Redis")])\n```')).toEqual([
+    { mode: "choice", question: "Cache", items: ["Memory", "Redis"], recommended: [1] },
+  ]);
 });
 
 it("has Ultrastatus read every child and check the finished ones", () => {

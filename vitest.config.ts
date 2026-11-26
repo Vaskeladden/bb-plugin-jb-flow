@@ -19,7 +19,6 @@ export default defineConfig({
       "status-copies.test.ts",
       "thread-states.test.ts",
       "section-order.test.ts",
-      "decision-choices.ui.test.tsx",
       "palette.ui.test.tsx",
       "catch-up.ui.test.tsx",
       "row-status.ui.test.tsx",
