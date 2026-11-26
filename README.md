@@ -261,16 +261,6 @@ context and token-budget meters. No overall completion percentage is inferred.
 Saved information remains visible during refresh failures; native activity
 controls return if the live timeline is unavailable.
 
-### Compact live tool trace
-
-With **Polish the entire BB interface** on, active native command bundles keep running work prominent in a bordered activity
-card with an indeterminate sweep. Earlier completed commands and thinking steps
-fold behind **Show trace**, with a live step count. Errors and explicitly opened
-output stay visible. Native approvals and questions remain outside these bundles.
-The enhancement preserves native nodes, controls and output; it restores the
-original view when work finishes, the shell setting is disabled, or the plugin
-unloads. Unrecognized markup stays native. Reduced motion disables the sweep.
-
 ### Reply choices
 
 Numbered decisions appear as one compact list with a row per option: a number
@@ -450,7 +440,7 @@ After code changes: `bb plugin build && bb plugin reload jb-flow`.
 
 Under **Settings → JB Flow**:
 
-- **Polish the entire BB interface**: restyles bb and folds finished commands behind *Show trace* (on by default).
+- **Polish the entire BB interface**: restyles bb (on by default).
 - **Thread monitor**: the idle activity card with the last status report (on by default).
 - **Workspaces**: workspace tabs across the top of bb (on by default).
 - **⌘K opens the JB Flow palette**: the palette takes over BB's Search threads key (on by default).

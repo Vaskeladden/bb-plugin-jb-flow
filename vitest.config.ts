@@ -14,7 +14,6 @@ export default defineConfig({
       "studio.ui.test.tsx",
       "shell-appearance.ui.test.tsx",
       "live-activity.ui.test.tsx",
-      "timeline-activity.ui.test.tsx",
       "thread-status.test.ts",
       "status-copies.test.ts",
       "thread-states.test.ts",
