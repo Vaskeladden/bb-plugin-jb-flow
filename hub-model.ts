@@ -332,9 +332,9 @@ export function readDetail(pr: GqlDetailPr | null | undefined, required: string[
  * re-run): the most recently started one wins, the way GitHub reports a
  * check's latest result, so a passing re-run clears an earlier failure (and a
  * newer skipped run hides an older failure, as GitHub evaluates it too). One
- * that has not started yet is the newest; a finished one without a start
- * time can't be ordered, so it ties. On a tie the one that has not passed
- * wins, so an order GitHub doesn't give never turns a failure green. A commit status of that name is used only when no check run
+ * that has not started yet is the newest; on a tie the one that has not
+ * passed wins. A finished one without a start time can't be ordered: if it
+ * has not passed, it wins over a passed newest. A commit status of that name is used only when no check run
  * has it.
  */
 export function requiredStates(detail: PrDetail, required: string[]): RequiredState[] {
@@ -348,23 +348,24 @@ export function requiredStates(detail: PrDetail, required: string[]): RequiredSt
 
 /** The newest instance of any of these check runs (the rule above), or null when none has one. */
 function newestRun(detail: PrDetail, names: string[]): RequiredRun | null {
+  const runs = detail.suites.flatMap((suite) => suite.required).filter((run) => names.includes(run.name));
+  // A finished run without a start time can't be ordered: it may be the newest.
+  const unordered = runs.filter((run) => run.startedAt === null && run.state !== "pending");
   let best: RequiredRun | null = null;
-  for (const suite of detail.suites) {
-    for (const run of suite.required) {
-      if (!names.includes(run.name)) continue;
-      if (best === null) {
-        best = run;
-        continue;
-      }
-      // A finished run without a start time can't be ordered: treat it as a tie, so one that has not passed wins.
-      const unordered = (candidate: RequiredRun) => candidate.startedAt === null && candidate.state !== "pending";
-      const tie = unordered(run) || unordered(best);
-      const mine = tie ? 0 : (run.startedAt ?? Infinity);
-      const theirs = tie ? 0 : (best.startedAt ?? Infinity);
-      if (mine > theirs || (mine === theirs && run.state !== "passed")) best = run;
+  for (const run of runs) {
+    if (unordered.includes(run)) continue;
+    if (best === null) {
+      best = run;
+      continue;
     }
+    const mine = run.startedAt ?? Infinity;
+    const theirs = best.startedAt ?? Infinity;
+    if (mine > theirs || (mine === theirs && run.state !== "passed")) best = run;
   }
-  return best;
+  // So one of those that has not passed beats a pass: an order GitHub doesn't give never turns a failure green.
+  const unorderedFailure = unordered.find((run) => run.state !== "passed");
+  if (unorderedFailure && (best === null || best.state === "passed")) return unorderedFailure;
+  return best ?? unordered[0] ?? null;
 }
 
 /**

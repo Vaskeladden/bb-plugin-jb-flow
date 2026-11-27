@@ -268,6 +268,15 @@ test("a finished run without a start time can't be ordered: a failure beside it 
   const unstartedPass: Run = { status: "COMPLETED", conclusion: "SUCCESS", startedAt: null };
   const earlier = await verdictOf({ light: ALL_DONE, detail: { pairs: ALL_DONE, suites: [{ id: 1, build: [passed()], gate: [unstartedPass] }, { id: 2, gate: [failedRun(5)] }] } });
   assert.equal(earlier.kind, "failed");
+  // Whatever order the suites come in.
+  const unstartedFailure: Run = { status: "COMPLETED", conclusion: "FAILURE", startedAt: null };
+  const three = [unstartedFailure, failedRun(20), passed(10)];
+  for (const order of [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]]) {
+    const suites = [{ id: 9, build: [passed()] }, ...order.map((index, id) => ({ id, gate: [three[index]!] }))];
+    assert.equal((await verdictOf({ light: ALL_DONE, detail: { pairs: ALL_DONE, suites } })).kind, "failed", order.join(","));
+  }
+  // Only passes without start times: green, as before.
+  assert.equal((await verdictOf({ light: ALL_DONE, detail: { pairs: ALL_DONE, suites: [{ id: 1, build: [passed()], gate: [unstartedPass] }] } })).kind, "green");
 });
 
 test("a PR marked ready never counts the stand-in, and an old draft run's failed stand-in is not an optional failure", async () => {
