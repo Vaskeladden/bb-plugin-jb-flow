@@ -75,8 +75,11 @@ function loadLocalConfig(bb: BbPluginApi, settingJson: string): LocalConfig {
   const file = readLocalConfigFile(bb);
   if (!settingJson.trim()) return file;
   try {
-    const fromSetting = localConfigSchema.partial().parse(JSON.parse(settingJson));
-    return { ...file, ...Object.fromEntries(Object.entries(fromSetting).filter(([, value]) => value !== undefined)) };
+    const raw: unknown = JSON.parse(settingJson);
+    const fromSetting = localConfigSchema.partial().parse(raw);
+    // Only the keys the setting names win: parsing fills defaults for the others, which must not hide the file's.
+    const named = new Set(raw !== null && typeof raw === "object" ? Object.keys(raw) : []);
+    return { ...file, ...Object.fromEntries(Object.entries(fromSetting).filter(([key, value]) => named.has(key) && value !== undefined)) };
   } catch (error) {
     bb.log.warn(`ignoring invalid Advanced config setting: ${String(error)}`);
     return file;

@@ -138,6 +138,7 @@ test("a required check whose newest run is still queued stays pending, whatever 
   // A required commit status still PENDING or EXPECTED is not green either.
   for (const state of ["PENDING", "EXPECTED"]) {
     const answer = {
+      isDraft: false,
       commits: { nodes: [{ commit: { oid: "abc1234def", statusCheckRollup: null, status: { contexts: [{ context: "Merge Gate", state, targetUrl: null }] }, checkSuites: { totalCount: 1, nodes: [{ failed: { totalCount: 0, nodes: [] }, q0: { nodes: [{ name: "Build", status: "COMPLETED", conclusion: "SUCCESS", startedAt: "2026-11-11T11:00:00Z", detailsUrl: null }] }, q1: { nodes: [] } }] } } }] },
     };
     const read = readDetail(answer, REQUIRED, light(), NOW)!;
@@ -145,9 +146,12 @@ test("a required check whose newest run is still queued stays pending, whatever 
   }
 });
 
-test("a detail read of another head is not used", () => {
-  const answer = { commits: { nodes: [{ commit: { oid: "other", statusCheckRollup: null, status: null, checkSuites: { totalCount: 0, nodes: [] } } }] } };
+test("a detail read of another head, or of a PR marked ready or back to draft since the light read, is not used", () => {
+  const answer = { isDraft: false, commits: { nodes: [{ commit: { oid: "other", statusCheckRollup: null, status: null, checkSuites: { totalCount: 0, nodes: [] } } }] } };
   assert.equal(readDetail(answer, REQUIRED, light(), NOW), null);
+  const sameHead = { ...answer, commits: { nodes: [{ commit: { ...answer.commits.nodes[0]!.commit, oid: "abc1234def" } }] } };
+  assert.notEqual(readDetail(sameHead, REQUIRED, light(), NOW), null);
+  assert.equal(readDetail(sameHead, REQUIRED, light({ isDraft: true }), NOW), null);
   assert.equal(checksVerdict(light(), detail({ headSha: "other" }), RULES).kind, "pending");
 });
 

@@ -85,7 +85,9 @@ export type RequiredChecks = { names: string[]; classicUnreadable: boolean };
 /** Required check name → the check that stands in for it on a draft PR (Advanced config `draftGates`). */
 export type DraftGates = Record<string, string>;
 /** The required checks and their stand-ins a detail read asks for: each name once, required ones first. */
-export const detailNames = (required: string[], draftGates: DraftGates) => [...new Set([...required, ...required.flatMap((name) => (draftGates[name] ? [draftGates[name]!] : []))])];
+/** A required check's stand-in on drafts; only the map's own keys, so a check named like `constructor` has none. */
+export const standInOf = (draftGates: DraftGates, name: string): string | undefined => (Object.hasOwn(draftGates, name) ? draftGates[name] : undefined);
+export const detailNames = (required: string[], draftGates: DraftGates) => [...new Set([...required, ...required.flatMap((name) => standInOf(draftGates, name) ?? [])])];
 
 /** One detail read of a PR's head: its own counts, failures per suite, and every required check instance. */
 export type PrDetail = {
@@ -164,7 +166,7 @@ export function detailQuery(repo: string, numbers: number[], required: string[])
     .map((name, i) => `q${i}: checkRuns(first: 5, filterBy: {checkType: LATEST, checkName: ${JSON.stringify(name)}}) { nodes { name status conclusion startedAt detailsUrl } }`)
     .join(" ");
   const prs = numbers.map(
-    (n) => `d${n}: pullRequest(number: ${n}) { commits(last: 1) { nodes { commit { oid statusCheckRollup { ${COUNTS} } status { contexts { context state targetUrl } }
+    (n) => `d${n}: pullRequest(number: ${n}) { isDraft commits(last: 1) { nodes { commit { oid statusCheckRollup { ${COUNTS} } status { contexts { context state targetUrl } }
       checkSuites(first: ${DETAIL_SUITES}) { totalCount nodes {
         failed: checkRuns(first: ${FAILED_PER_SUITE}, ${FAILED_FILTER}) { totalCount nodes { name conclusion detailsUrl } }
         ${requiredFields} } } } } } }`,
@@ -276,6 +278,7 @@ export function readRun(node: GqlRun): RunLight {
 
 type GqlCheckRun = { name: string; status?: string; conclusion: string | null; startedAt?: string | null; detailsUrl: string | null };
 type GqlDetailPr = {
+  isDraft: boolean;
   commits: {
     nodes: Array<{
       commit: {
@@ -291,10 +294,13 @@ type GqlDetailPr = {
 const runState = (run: GqlCheckRun): CheckState => (run.status !== "COMPLETED" ? "pending" : FAILED.has(run.conclusion ?? "") ? "failed" : "passed");
 const statusState = (state: string): CheckState => (FAILED.has(state) ? "failed" : PENDING.has(state) ? "pending" : "passed");
 
-/** A detail answer, or null when it is not about the head the light read saw (a push landed in between). */
+/**
+ * A detail answer, or null when it is not about the PR the light read saw: a push landed in
+ * between, or the PR was marked ready or turned back into a draft (which decides `draftGates`).
+ */
 export function readDetail(pr: GqlDetailPr | null | undefined, required: string[], light: PrLight, readAt: number): PrDetail | null {
   const commit = pr?.commits.nodes[0]?.commit;
-  if (!commit || commit.oid !== light.headSha || !light.counts) return null;
+  if (!commit || commit.oid !== light.headSha || pr!.isDraft !== light.isDraft || !light.counts) return null;
   const suites: DetailSuite[] = commit.checkSuites.nodes.map((suite) => ({
     failed: suite.failed.nodes.map((run) => ({ name: run.name, conclusion: (run.conclusion ?? "FAILURE").toLowerCase(), url: run.detailsUrl })),
     failedMore: Math.max(0, suite.failed.totalCount - suite.failed.nodes.length),
@@ -326,8 +332,8 @@ export function readDetail(pr: GqlDetailPr | null | undefined, required: string[
  * re-run): the most recently started one wins, the way GitHub reports a
  * check's latest result, so a passing re-run clears an earlier failure (and a
  * newer skipped run hides an older failure, as GitHub evaluates it too). One
- * that has not started yet is the newest; on a tie the one that has not
- * passed wins. A commit status of that name is used only when no check run
+ * that has not started yet is the newest, and a finished one without a start
+ * time the oldest; on a tie the one that has not passed wins. A commit status of that name is used only when no check run
  * has it.
  */
 export function requiredStates(detail: PrDetail, required: string[]): RequiredState[] {
@@ -339,6 +345,9 @@ export function requiredStates(detail: PrDetail, required: string[]): RequiredSt
   });
 }
 
+/** When a run started, for ordering: one not started yet is the newest, a finished one without a start time the oldest. */
+const startOf = (run: RequiredRun) => run.startedAt ?? (run.state === "pending" ? Infinity : -Infinity);
+
 /** The newest instance of any of these check runs (the rule above), or null when none has one. */
 function newestRun(detail: PrDetail, names: string[]): RequiredRun | null {
   let best: RequiredRun | null = null;
@@ -349,8 +358,8 @@ function newestRun(detail: PrDetail, names: string[]): RequiredRun | null {
         best = run;
         continue;
       }
-      const mine = run.startedAt ?? Infinity;
-      const theirs = best.startedAt ?? Infinity;
+      const mine = startOf(run);
+      const theirs = startOf(best);
       if (mine > theirs || (mine === theirs && run.state !== "passed")) best = run;
     }
   }
@@ -366,7 +375,7 @@ function newestRun(detail: PrDetail, names: string[]): RequiredRun | null {
 function gatedStates(light: PrLight, detail: PrDetail, names: string[], draftGates: DraftGates): Array<RequiredState & { for: string }> {
   return names.map((name) => {
     const own = { ...requiredStates(detail, [name])[0]!, for: name };
-    const by = light.isDraft ? draftGates[name] : undefined;
+    const by = light.isDraft ? standInOf(draftGates, name) : undefined;
     if (!by) return own;
     const newest = newestRun(detail, [name, by]);
     if (newest) return { name: newest.name, state: newest.state, url: newest.url, for: name };

@@ -34,8 +34,9 @@ const node = (name: string, run: Run) => ({ name, status: run.status, conclusion
  * alias and check name, in query order). Both suite id fields are given so the
  * same answer reads in older query shapes too.
  */
-function detailPr(pairs: Pairs, suites: Suite[], aliases: Array<[string, string]>, oid = HEAD, totalCount = suites.length) {
+function detailPr(pairs: Pairs, suites: Suite[], aliases: Array<[string, string]>, oid = HEAD, totalCount = suites.length, isDraft = false) {
   return {
+    isDraft,
     commits: {
       nodes: [
         {
@@ -94,7 +95,7 @@ function fakeGh(script: Script) {
       const detail = script.detail;
       if (detail === undefined || detail === "error") return fail("gh: Something went wrong while executing your query.");
       const aliases = [...query.matchAll(/(q\d+): checkRuns\(first: \d+, filterBy: \{checkType: LATEST, checkName: "([^"]+)"\}/g)].map((match): [string, string] => [match[1]!, match[2]!]);
-      return ok({ rateLimit: { remaining: 3990, resetAt: RESET() }, r: { d12: detailPr(detail.pairs, detail.suites, aliases, detail.oid, detail.totalCount) } });
+      return ok({ rateLimit: { remaining: 3990, resetAt: RESET() }, r: { d12: detailPr(detail.pairs, detail.suites, aliases, detail.oid, detail.totalCount, script.draft) } });
     }
     if (args[1]?.includes("/rules/branches/")) {
       calls.push("rules");
@@ -251,6 +252,10 @@ test("a draft PR: the newer of the gate and its stand-in counts, so a full run o
   // A draft run after a full run on the same head (back to draft): the draft run decides.
   const back = await verdictOf({ draft: true, light: ALL_DONE, detail: { pairs: ALL_DONE, suites: [{ id: 1, build: [passed()], gate: [passed(30)] }, { id: 2, draftGate: [failedRun(5)] }] } }, DRAFT_GATES);
   assert.deepEqual(back.kind === "failed" && back.blocking.map((check) => check.name), ["Draft Gate"]);
+  // A finished stand-in without a start time is never newer than a gate that started and failed.
+  const unstarted: Run = { status: "COMPLETED", conclusion: "SUCCESS", startedAt: null };
+  const hidden = await verdictOf({ draft: true, light: ALL_DONE, detail: { pairs: ALL_DONE, suites: [{ id: 1, build: [passed()], gate: [failedRun(5)], draftGate: [unstarted] }] } }, DRAFT_GATES);
+  assert.deepEqual(hidden.kind === "failed" && hidden.blocking.map((check) => check.name), ["Merge Gate"]);
   // Neither created yet: one wait, naming both.
   const none = await verdictOf({ draft: true, light: ALL_DONE, detail: { pairs: ALL_DONE, suites: [{ id: 1, build: [passed()] }] } }, DRAFT_GATES);
   assert.match(none.kind === "pending" ? none.waitingFor : none.kind, /required Merge Gate or Draft Gate \(not created yet\)$/);
@@ -284,6 +289,9 @@ test("the detail read asks for each stand-in once, beside the required checks", 
   const hub = createHub(bb, github, createReads(github), async () => WATCHED, { "Merge Gate": "Draft Gate", Build: "Draft Gate" });
   assert.equal((await hub.cycle())!.verdict(REPO, 12)!.kind, "draft");
   assert.deepEqual([...queries[0]!.matchAll(/checkName: "([^"]+)"/g)].map((match) => match[1]), ["Build", "Merge Gate", "Draft Gate"]);
+  // Only the map's own keys: a required check named like an inherited property has no stand-in.
+  const inherited = await verdictOf({ draft: true, rules: ["constructor"], light: ALL_DONE, detail: { pairs: ALL_DONE, suites: [{ id: 1 }] } }, {});
+  assert.match(inherited.kind === "pending" ? inherited.waitingFor : inherited.kind, /^required constructor \(not created yet/);
 });
 
 // --- the rest of the rule -----------------------------------------------------------
