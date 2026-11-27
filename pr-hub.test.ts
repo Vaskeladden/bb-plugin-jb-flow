@@ -261,6 +261,15 @@ test("a draft PR: the newer of the gate and its stand-in counts, so a full run o
   assert.match(none.kind === "pending" ? none.waitingFor : none.kind, /required Merge Gate or Draft Gate \(not created yet\)$/);
 });
 
+test("a finished run without a start time can't be ordered: a failure beside it is never hidden", async () => {
+  const cancelled: Run = { status: "COMPLETED", conclusion: "CANCELLED", startedAt: null };
+  const ready = await verdictOf({ light: ALL_DONE, detail: { pairs: ALL_DONE, suites: [{ id: 1, build: [passed()], gate: [passed(30)] }, { id: 2, gate: [cancelled] }] } });
+  assert.equal(ready.kind, "failed");
+  const unstartedPass: Run = { status: "COMPLETED", conclusion: "SUCCESS", startedAt: null };
+  const earlier = await verdictOf({ light: ALL_DONE, detail: { pairs: ALL_DONE, suites: [{ id: 1, build: [passed()], gate: [unstartedPass] }, { id: 2, gate: [failedRun(5)] }] } });
+  assert.equal(earlier.kind, "failed");
+});
+
 test("a PR marked ready never counts the stand-in, and an old draft run's failed stand-in is not an optional failure", async () => {
   // Marked ready, the full run not yet at its gate: the draft run's passed stand-in does not count.
   const waiting = await verdictOf({ light: ALL_DONE, detail: { pairs: ALL_DONE, suites: [{ id: 1, build: [passed()], draftGate: [passed(20)] }] } }, DRAFT_GATES);

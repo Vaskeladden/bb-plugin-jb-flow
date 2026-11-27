@@ -332,8 +332,9 @@ export function readDetail(pr: GqlDetailPr | null | undefined, required: string[
  * re-run): the most recently started one wins, the way GitHub reports a
  * check's latest result, so a passing re-run clears an earlier failure (and a
  * newer skipped run hides an older failure, as GitHub evaluates it too). One
- * that has not started yet is the newest, and a finished one without a start
- * time the oldest; on a tie the one that has not passed wins. A commit status of that name is used only when no check run
+ * that has not started yet is the newest; a finished one without a start
+ * time can't be ordered, so it ties. On a tie the one that has not passed
+ * wins, so an order GitHub doesn't give never turns a failure green. A commit status of that name is used only when no check run
  * has it.
  */
 export function requiredStates(detail: PrDetail, required: string[]): RequiredState[] {
@@ -345,9 +346,6 @@ export function requiredStates(detail: PrDetail, required: string[]): RequiredSt
   });
 }
 
-/** When a run started, for ordering: one not started yet is the newest, a finished one without a start time the oldest. */
-const startOf = (run: RequiredRun) => run.startedAt ?? (run.state === "pending" ? Infinity : -Infinity);
-
 /** The newest instance of any of these check runs (the rule above), or null when none has one. */
 function newestRun(detail: PrDetail, names: string[]): RequiredRun | null {
   let best: RequiredRun | null = null;
@@ -358,8 +356,11 @@ function newestRun(detail: PrDetail, names: string[]): RequiredRun | null {
         best = run;
         continue;
       }
-      const mine = startOf(run);
-      const theirs = startOf(best);
+      // A finished run without a start time can't be ordered: treat it as a tie, so one that has not passed wins.
+      const unordered = (candidate: RequiredRun) => candidate.startedAt === null && candidate.state !== "pending";
+      const tie = unordered(run) || unordered(best);
+      const mine = tie ? 0 : (run.startedAt ?? Infinity);
+      const theirs = tie ? 0 : (best.startedAt ?? Infinity);
       if (mine > theirs || (mine === theirs && run.state !== "passed")) best = run;
     }
   }
