@@ -56,7 +56,7 @@ export function stepCiWatch(input: CiWatch, light: PrLight, verdict: Verdict, me
 
   if (!done && watch.watchFor !== "reviews") {
     let concluded = false;
-    if (verdict.kind === "green" || verdict.kind === "failed") {
+    if (verdict.kind === "green" || verdict.kind === "draft" || verdict.kind === "failed") {
       notes.push(verdictText(light, verdict));
       if (verdict.kind === "failed") logOf = verdict.blocking.find((check) => check.url) ?? null;
       concluded = true;

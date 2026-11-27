@@ -14,14 +14,14 @@ const RESET = () => new Date(Date.now() + 30 * 60_000).toISOString();
 const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
 
 type Run = { status: "QUEUED" | "IN_PROGRESS" | "COMPLETED"; conclusion?: string | null; startedAt?: string | null; url?: string };
-type Suite = { id: number; failed?: Array<{ name: string; url?: string }>; build?: Run[]; gate?: Run[] };
+type Suite = { id: number; failed?: Array<{ name: string; url?: string }>; build?: Run[]; gate?: Run[]; draftGate?: Run[] };
 type Pairs = Array<[string, number]>;
 
 const counts = (pairs: Pairs) => ({ checkRunCountsByState: pairs.map(([state, count]) => ({ state, count })), statusContextCountsByState: [] });
 
-function lightPr(pairs: Pairs, oid = HEAD) {
+function lightPr(pairs: Pairs, oid = HEAD, isDraft = false) {
   return {
-    number: 12, title: "Fix login", url: `https://github.com/${REPO}/pull/12`, state: "OPEN", isDraft: false, mergeable: "MERGEABLE", reviewDecision: null,
+    number: 12, title: "Fix login", url: `https://github.com/${REPO}/pull/12`, state: "OPEN", isDraft, mergeable: "MERGEABLE", reviewDecision: null,
     baseRefName: "main", headRefName: "fix-login", headRefOid: oid, mergedAt: null,
     commits: { nodes: [{ commit: { oid, statusCheckRollup: { state: "PENDING", contexts: counts(pairs) } } }] },
   };
@@ -34,8 +34,9 @@ const node = (name: string, run: Run) => ({ name, status: run.status, conclusion
  * alias and check name, in query order). Both suite id fields are given so the
  * same answer reads in older query shapes too.
  */
-function detailPr(pairs: Pairs, suites: Suite[], aliases: Array<[string, string]>, oid = HEAD, totalCount = suites.length) {
+function detailPr(pairs: Pairs, suites: Suite[], aliases: Array<[string, string]>, oid = HEAD, totalCount = suites.length, isDraft = false) {
   return {
+    isDraft,
     commits: {
       nodes: [
         {
@@ -53,7 +54,7 @@ function detailPr(pairs: Pairs, suites: Suite[], aliases: Array<[string, string]
                   nodes: (suite.failed ?? []).map((check) => ({ name: check.name, conclusion: "FAILURE", detailsUrl: check.url ?? null, isRequired: false })),
                 },
                 ...Object.fromEntries(
-                  aliases.map(([alias, name]) => [alias, { nodes: ((name === "Build" ? suite.build : name === "Merge Gate" ? suite.gate : []) ?? []).map((run) => node(name, run)) }]),
+                  aliases.map(([alias, name]) => [alias, { nodes: ((name === "Build" ? suite.build : name === "Merge Gate" ? suite.gate : name === "Draft Gate" ? suite.draftGate : []) ?? []).map((run) => node(name, run)) }]),
                 ),
               })),
             },
@@ -67,6 +68,8 @@ function detailPr(pairs: Pairs, suites: Suite[], aliases: Array<[string, string]
 type Script = {
   light: Pairs | (() => Pairs);
   lightOid?: string;
+  /** The PR is a draft. */
+  draft?: boolean;
   lightRemaining?: number;
   detail?: { pairs: Pairs; suites: Suite[]; oid?: string; totalCount?: number } | "error";
   rules?: string[] | "error";
@@ -86,13 +89,13 @@ function fakeGh(script: Script) {
       if (query.includes("viewer { login }")) {
         calls.push("light");
         const pairs = typeof script.light === "function" ? script.light() : script.light;
-        return ok({ rateLimit: { remaining: script.lightRemaining ?? 4000, resetAt: RESET() }, viewer: { login: "sam" }, r0: { p12: lightPr(pairs, script.lightOid) } });
+        return ok({ rateLimit: { remaining: script.lightRemaining ?? 4000, resetAt: RESET() }, viewer: { login: "sam" }, r0: { p12: lightPr(pairs, script.lightOid, script.draft) } });
       }
       calls.push("detail");
       const detail = script.detail;
       if (detail === undefined || detail === "error") return fail("gh: Something went wrong while executing your query.");
       const aliases = [...query.matchAll(/(q\d+): checkRuns\(first: \d+, filterBy: \{checkType: LATEST, checkName: "([^"]+)"\}/g)].map((match): [string, string] => [match[1]!, match[2]!]);
-      return ok({ rateLimit: { remaining: 3990, resetAt: RESET() }, r: { d12: detailPr(detail.pairs, detail.suites, aliases, detail.oid, detail.totalCount) } });
+      return ok({ rateLimit: { remaining: 3990, resetAt: RESET() }, r: { d12: detailPr(detail.pairs, detail.suites, aliases, detail.oid, detail.totalCount, script.draft) } });
     }
     if (args[1]?.includes("/rules/branches/")) {
       calls.push("rules");
@@ -129,16 +132,16 @@ function fakeBb() {
 
 const WATCHED: Interest = { prs: [{ repo: REPO, number: 12, feedback: false, watched: true }], runs: [], urgent: true };
 
-function setup(script: Script, wanted: Interest = WATCHED) {
+function setup(script: Script, wanted: Interest = WATCHED, draftGates: Record<string, string> = {}) {
   const { runner, calls } = fakeGh(script);
   const { bb, services, warnings } = fakeBb();
   const github = createGitHub(createQuota(), runner);
-  const hub = createHub(bb, github, createReads(github), async () => wanted);
+  const hub = createHub(bb, github, createReads(github), async () => wanted, draftGates);
   return { hub, calls, services, warnings, github };
 }
 
-async function verdictOf(script: Script) {
-  const { hub } = setup(script);
+async function verdictOf(script: Script, draftGates: Record<string, string> = {}) {
+  const { hub } = setup(script, WATCHED, draftGates);
   const view = await hub.cycle();
   return view!.verdict(REPO, 12)!;
 }
@@ -223,6 +226,90 @@ test("case 6: the early failure's log is read from its job while the run still g
   assert.equal(text, "\n```\nnpm test\nFAIL auth.test.ts\n##[error]Process completed with exit code 2.\n```");
   answer = { stdout: "", stderr: "gh: Not Found (HTTP 404)", error: Object.assign(new Error("exit 1"), { code: 1 }) };
   assert.match(await reads.failedLog(REPO, { runId: 7, jobId: 8 }), /^\n\(Log not available: .*Not Found \(HTTP 404\)\)$/);
+});
+
+// --- draft PRs (draftGates) ---------------------------------------------------------------
+
+const DRAFT_GATES = { "Merge Gate": "Draft Gate" };
+
+test("a draft PR whose CI ran the draft set: judged on the stand-in, and a pass is the draft verdict, not green", async () => {
+  const draft = await verdictOf({ draft: true, light: ALL_DONE, detail: { pairs: ALL_DONE, suites: [{ id: 1, build: [passed()], draftGate: [passed()] }] } }, DRAFT_GATES);
+  assert.equal(draft.kind, "draft");
+  assert.deepEqual(draft.kind === "draft" && [draft.required, draft.standIns], [["Build", "Draft Gate"], [{ required: "Merge Gate", by: "Draft Gate" }]]);
+  const failed = await verdictOf({ draft: true, light: ALL_DONE, detail: { pairs: ALL_DONE, suites: [{ id: 1, build: [passed()], draftGate: [failedRun()] }] } }, DRAFT_GATES);
+  assert.deepEqual(failed.kind === "failed" && failed.blocking.map((check) => check.name), ["Draft Gate"]);
+  // The stand-in still running, and another required check, keep it pending.
+  const running = await verdictOf({ draft: true, light: ALL_DONE, detail: { pairs: ALL_DONE, suites: [{ id: 1, build: [passed()], draftGate: [{ status: "IN_PROGRESS", startedAt: ago(1) }] }] } }, DRAFT_GATES);
+  assert.match(running.kind === "pending" ? running.waitingFor : running.kind, /Draft Gate \(queued or running\)/);
+  const noBuild = await verdictOf({ draft: true, light: ALL_DONE, detail: { pairs: ALL_DONE, suites: [{ id: 1, draftGate: [passed()] }] } }, DRAFT_GATES);
+  assert.match(noBuild.kind === "pending" ? noBuild.waitingFor : noBuild.kind, /Build \(not created yet\)/);
+});
+
+test("a draft PR: the newer of the gate and its stand-in counts, so a full run on a draft is green and neither is waited for twice", async () => {
+  // Drafts that still run the full set: the gate itself, plain green.
+  const full = await verdictOf({ draft: true, light: ALL_DONE, detail: { pairs: ALL_DONE, suites: [{ id: 1, build: [passed()], gate: [passed()] }] } }, DRAFT_GATES);
+  assert.equal(full.kind, "green");
+  // A draft run after a full run on the same head (back to draft): the draft run decides.
+  const back = await verdictOf({ draft: true, light: ALL_DONE, detail: { pairs: ALL_DONE, suites: [{ id: 1, build: [passed()], gate: [passed(30)] }, { id: 2, draftGate: [failedRun(5)] }] } }, DRAFT_GATES);
+  assert.deepEqual(back.kind === "failed" && back.blocking.map((check) => check.name), ["Draft Gate"]);
+  // A finished stand-in without a start time is never newer than a gate that started and failed.
+  const unstarted: Run = { status: "COMPLETED", conclusion: "SUCCESS", startedAt: null };
+  const hidden = await verdictOf({ draft: true, light: ALL_DONE, detail: { pairs: ALL_DONE, suites: [{ id: 1, build: [passed()], gate: [failedRun(5)], draftGate: [unstarted] }] } }, DRAFT_GATES);
+  assert.deepEqual(hidden.kind === "failed" && hidden.blocking.map((check) => check.name), ["Merge Gate"]);
+  // Neither created yet: one wait, naming both.
+  const none = await verdictOf({ draft: true, light: ALL_DONE, detail: { pairs: ALL_DONE, suites: [{ id: 1, build: [passed()] }] } }, DRAFT_GATES);
+  assert.match(none.kind === "pending" ? none.waitingFor : none.kind, /required Merge Gate or Draft Gate \(not created yet\)$/);
+});
+
+test("a finished run without a start time can't be ordered: a failure beside it is never hidden", async () => {
+  const cancelled: Run = { status: "COMPLETED", conclusion: "CANCELLED", startedAt: null };
+  const ready = await verdictOf({ light: ALL_DONE, detail: { pairs: ALL_DONE, suites: [{ id: 1, build: [passed()], gate: [passed(30)] }, { id: 2, gate: [cancelled] }] } });
+  assert.equal(ready.kind, "failed");
+  const unstartedPass: Run = { status: "COMPLETED", conclusion: "SUCCESS", startedAt: null };
+  const earlier = await verdictOf({ light: ALL_DONE, detail: { pairs: ALL_DONE, suites: [{ id: 1, build: [passed()], gate: [unstartedPass] }, { id: 2, gate: [failedRun(5)] }] } });
+  assert.equal(earlier.kind, "failed");
+  // Whatever order the suites come in.
+  const unstartedFailure: Run = { status: "COMPLETED", conclusion: "FAILURE", startedAt: null };
+  const three = [unstartedFailure, failedRun(20), passed(10)];
+  for (const order of [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]]) {
+    const suites = [{ id: 9, build: [passed()] }, ...order.map((index, id) => ({ id, gate: [three[index]!] }))];
+    assert.equal((await verdictOf({ light: ALL_DONE, detail: { pairs: ALL_DONE, suites } })).kind, "failed", order.join(","));
+  }
+  // Only passes without start times: green, as before.
+  assert.equal((await verdictOf({ light: ALL_DONE, detail: { pairs: ALL_DONE, suites: [{ id: 1, build: [passed()], gate: [unstartedPass] }] } })).kind, "green");
+});
+
+test("a PR marked ready never counts the stand-in, and an old draft run's failed stand-in is not an optional failure", async () => {
+  // Marked ready, the full run not yet at its gate: the draft run's passed stand-in does not count.
+  const waiting = await verdictOf({ light: ALL_DONE, detail: { pairs: ALL_DONE, suites: [{ id: 1, build: [passed()], draftGate: [passed(20)] }] } }, DRAFT_GATES);
+  assert.match(waiting.kind === "pending" ? waiting.waitingFor : waiting.kind, /required Merge Gate \(not created yet\)$/);
+  const lateFailure = { name: "Draft Gate" };
+  const green = await verdictOf({ light: ALL_DONE, detail: { pairs: ALL_DONE, suites: [{ id: 1, build: [passed()], draftGate: [failedRun(30)], failed: [lateFailure] }, { id: 2, gate: [passed(5)] }] } }, DRAFT_GATES);
+  assert.equal(green.kind, "green");
+  assert.deepEqual(green.kind === "green" && green.optionalFailed, []);
+});
+
+test("a draft PR without draftGates waits as before, and the wait says how to map a draft gate", async () => {
+  const verdict = await verdictOf({ draft: true, light: ALL_DONE, detail: { pairs: ALL_DONE, suites: [{ id: 1, build: [passed()], draftGate: [passed()] }] } });
+  assert.equal(verdict.kind, "pending");
+  assert.match(verdict.kind === "pending" ? verdict.waitingFor : "", /Merge Gate \(not created yet; draft PR: if its CI runs another gate on drafts, map it in draftGates\)/);
+});
+
+test("the detail read asks for each stand-in once, beside the required checks", async () => {
+  const queries: string[] = [];
+  const { runner } = fakeGh({ draft: true, light: ALL_DONE, detail: { pairs: ALL_DONE, suites: [{ id: 1, build: [passed()], draftGate: [passed()] }] } });
+  const recording: Runner = async (args) => {
+    if (args[1] === "graphql" && !args[3]!.includes("viewer { login }")) queries.push(args[3]!);
+    return runner(args);
+  };
+  const { bb } = fakeBb();
+  const github = createGitHub(createQuota(), recording);
+  const hub = createHub(bb, github, createReads(github), async () => WATCHED, { "Merge Gate": "Draft Gate", Build: "Draft Gate" });
+  assert.equal((await hub.cycle())!.verdict(REPO, 12)!.kind, "draft");
+  assert.deepEqual([...queries[0]!.matchAll(/checkName: "([^"]+)"/g)].map((match) => match[1]), ["Build", "Merge Gate", "Draft Gate"]);
+  // Only the map's own keys: a required check named like an inherited property has no stand-in.
+  const inherited = await verdictOf({ draft: true, rules: ["constructor"], light: ALL_DONE, detail: { pairs: ALL_DONE, suites: [{ id: 1 }] } }, {});
+  assert.match(inherited.kind === "pending" ? inherited.waitingFor : inherited.kind, /^required constructor \(not created yet/);
 });
 
 // --- the rest of the rule -----------------------------------------------------------

@@ -68,6 +68,7 @@ function fakeGh(world: World) {
           ...rate,
           r: {
             d12: {
+              isDraft: false,
               commits: {
                 nodes: [
                   {

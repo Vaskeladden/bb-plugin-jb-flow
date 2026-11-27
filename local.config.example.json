@@ -50,5 +50,8 @@
     "my-desktop-app": {
       "mode": "release"
     }
+  },
+  "draftGates": {
+    "CI Gate": "Draft CI Gate"
   }
 }
