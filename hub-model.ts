@@ -498,7 +498,7 @@ export function verdictText(light: PrLight, verdict: Extract<Verdict, { kind: "g
   if (verdict.kind === "draft") {
     const standIns = verdict.standIns.map((pair) => `${pair.by} in place of ${pair.required}`).join(", ");
     const later = verdict.standIns.map((pair) => pair.required).join(" and ");
-    return `✅ Draft checks passed on ${where} (draft PR, ${standIns}):${required} ${passed}. ${later} ${verdict.standIns.length === 1 ? "has" : "have"} not run on this head; ${verdict.standIns.length === 1 ? "it runs" : "they run"} when the PR is marked ready for review.${optional}${running}`;
+    return `✅ Draft checks passed on ${where} (draft PR, ${standIns}):${required} ${passed}. ${later} ${verdict.standIns.length === 1 ? "counts" : "count"} once the PR is marked ready for review.${optional}${running}`;
   }
   return `✅ CI is green on ${where}${note}:${required} ${passed}.${optional}${running}`;
 }

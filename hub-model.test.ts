@@ -103,7 +103,7 @@ test("the draft line names the stand-in and says the required check runs when th
   const draft = checksVerdict(light({ counts, isDraft: true }), read, RULES, { "Merge Gate": "Draft Gate" });
   assert.equal(
     draft.kind === "draft" && verdictText(light(), draft),
-    "✅ Draft checks passed on web-app#12 (abc1234) (draft PR, Draft Gate in place of Merge Gate): required checks passed (Build, Draft Gate); 40 of 40 checks passed. Merge Gate has not run on this head; it runs when the PR is marked ready for review.",
+    "✅ Draft checks passed on web-app#12 (abc1234) (draft PR, Draft Gate in place of Merge Gate): required checks passed (Build, Draft Gate); 40 of 40 checks passed. Merge Gate counts once the PR is marked ready for review.",
   );
 });
 
