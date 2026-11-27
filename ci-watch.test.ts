@@ -48,6 +48,13 @@ test("C7: a required check failing ends a checks watch at once, with its log", (
   assert.equal(logTargetOf("https://ci.example.com/build/3"), null);
 });
 
+test("draft checks passed end a checks watch with the draft line, never the green one", () => {
+  const draft: Verdict = { kind: "draft", required: ["Draft Gate"], standIns: [{ required: "Merge Gate", by: "Draft Gate" }], passed: 10, total: 10, optionalFailed: [], more: 0, pending: 0, note: null };
+  const step = stepCiWatch(watch({ watchFor: "checks" }), pr({ isDraft: true }), draft, "sam", NOW);
+  assert.equal(step.done, true);
+  assert.match(step.notes[0]!, /^✅ Draft checks passed on web-app#12 \(abc1234\) \(draft PR, Draft Gate in place of Merge Gate\)/);
+});
+
 test("pending: nothing to say", () => {
   const step = stepCiWatch(watch(), pr({ counts: { total: 10, pending: 3, failed: 0, passed: 7 } }), pending, "sam", NOW);
   assert.equal(step.report, false);

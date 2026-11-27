@@ -97,6 +97,16 @@ test("green and failed lines", () => {
   assert.equal(checksVerdict(light({ counts: failing }), gateRunning, RULES).kind, "pending");
 });
 
+test("the draft line names the stand-in and says the required check runs when the PR is marked ready", () => {
+  const counts = { total: 40, pending: 0, failed: 0, passed: 40 };
+  const read = detail({ counts, suites: [{ failed: [], failedMore: 0, required: [passed("Build"), passed("Draft Gate")] }] });
+  const draft = checksVerdict(light({ counts, isDraft: true }), read, RULES, { "Merge Gate": "Draft Gate" });
+  assert.equal(
+    draft.kind === "draft" && verdictText(light(), draft),
+    "✅ Draft checks passed on web-app#12 (abc1234) (draft PR, Draft Gate in place of Merge Gate): required checks passed (Build, Draft Gate); 40 of 40 checks passed. Merge Gate has not run on this head; it runs when the PR is marked ready for review.",
+  );
+});
+
 test("pending says what it waits for", () => {
   const notRead = checksVerdict(light(), undefined, RULES);
   assert.deepEqual(notRead, { kind: "pending", pending: 0, waitingFor: "check details not read this cycle" });

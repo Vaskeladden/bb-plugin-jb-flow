@@ -23,6 +23,7 @@ import {
   attentionOf,
   checksVerdict,
   DETAIL_BATCH,
+  detailNames,
   detailNeeded,
   detailQuery,
   lightBatches,
@@ -32,6 +33,7 @@ import {
   readLight,
   runKey,
   type Attention,
+  type DraftGates,
   type LightAnswer,
   type LightItem,
   type PrDetail,
@@ -106,7 +108,7 @@ const TICK_MS = 10_000;
 
 const rateLimited = (error: unknown) => error instanceof RateLimitedError || error instanceof QuotaPausedError;
 
-export function createHub(bb: BbPluginApi, github: GitHub, reads: Reads, interest: () => Promise<Interest>) {
+export function createHub(bb: BbPluginApi, github: GitHub, reads: Reads, interest: () => Promise<Interest>, draftGates: DraftGates = {}) {
   const lights = new Map<PrKey, PrLight>();
   /** The last detail read of each PR, any cycle: for `detailNeeded` and the sidebar, never for a verdict. */
   const details = new Map<PrKey, { detail: PrDetail; required: RequiredChecks | null }>();
@@ -183,7 +185,8 @@ export function createHub(bb: BbPluginApi, github: GitHub, reads: Reads, interes
       const [repo, base] = group.split(" ") as [string, string];
       if (stopped()) return;
       const rules = await requiredFor(repo, base);
-      const names = rules?.names ?? [];
+      // Stand-ins are read too: whether they count is decided per PR (a draft or not).
+      const names = detailNames(rules?.names ?? [], draftGates);
       for (let i = 0; i < numbers.length; i += DETAIL_BATCH) {
         if (stopped()) return;
         const batch = numbers.slice(i, i + DETAIL_BATCH);
@@ -237,7 +240,7 @@ export function createHub(bb: BbPluginApi, github: GitHub, reads: Reads, interes
         const light = fresh(repo, number);
         if (!light) return undefined;
         const key = prKey(repo, number);
-        return checksVerdict(light, cycle.details.get(key), details.get(key)?.required ?? null);
+        return checksVerdict(light, cycle.details.get(key), details.get(key)?.required ?? null, draftGates);
       },
       attention: (repo, number) => {
         const light = fresh(repo, number);

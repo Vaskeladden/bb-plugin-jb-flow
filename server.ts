@@ -66,6 +66,8 @@ const localConfigSchema = z.object({
   stripProjectPrefixes: z.array(z.string()).default([]),
   /** Projects (by BB name) whose release-blocked threads are woken on release. */
   releaseWatch: z.record(z.string(), releaseWatchSchema).default({}),
+  /** Required check → the check that stands in for it on a draft PR (hub-model.ts). */
+  draftGates: z.record(z.string(), z.string()).default({}),
 });
 type LocalConfig = z.infer<typeof localConfigSchema>;
 
@@ -451,7 +453,7 @@ export default async function plugin(bb: BbPluginApi) {
       type: "string",
       label: "Advanced config (JSON)",
       description:
-        "releaseWatch, projectShortNames, stripProjectPrefixes and repoCommands, in the local.config.json format from the README. Reload the plugin after a change.",
+        "releaseWatch, projectShortNames, stripProjectPrefixes, repoCommands and draftGates, in the local.config.json format from the README. Reload the plugin after a change.",
       experimental_multiline: true,
       default: "",
     },
@@ -784,8 +786,12 @@ export default async function plugin(bb: BbPluginApi) {
   const github = createGitHub();
   const reads = createReads(github);
   // Late-bound: the PR tracker and the watchers are created below, with the hub.
-  const hub = createHub(bb, github, reads, () =>
-    gatherInterest((text) => bb.log.warn(text), () => prTracker.interest(), () => watchers.interest()),
+  const hub = createHub(
+    bb,
+    github,
+    reads,
+    () => gatherInterest((text) => bb.log.warn(text), () => prTracker.interest(), () => watchers.interest()),
+    localConfig.draftGates,
   );
   const unreleased = createUnreleased(bb, reads);
   const machines = createMachines(bb);
